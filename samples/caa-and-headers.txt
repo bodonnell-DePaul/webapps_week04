@@ -1,0 +1,82 @@
+# Captured 2026-08-15. Real output.
+
+
+--- CAA records, via Cloudflare DNS-over-HTTPS (dig +short CAA <name> gives the same) ---
+
+$ dig +short CAA github.com
+0 issue "digicert.com"
+0 issue "globalsign.com"
+0 issue "letsencrypt.org"
+0 issue "sectigo.com"
+0 issuewild "digicert.com"
+0 issuewild "letsencrypt.org"
+0 issuewild "sectigo.com"
+
+$ dig +short CAA letsencrypt.org
+0 issue "amazon.com"
+0 issue "letsencrypt.org"
+0 issue "pki.goog"
+0 issue "sectigo.com"
+0 issue "ssl.com"
+0 issue "www.digicert.com"
+0 issuewild "amazon.com"
+0 issuewild "letsencrypt.org"
+0 issuewild "pki.goog"
+0 issuewild "sectigo.com"
+0 issuewild "ssl.com"
+0 issuewild "www.digicert.com"
+
+$ dig +short CAA depaul.edu
+(no CAA record - any public CA may issue for this name)
+
+
+--- HSTS headers, real sites ---
+
+$ curl -sSI https://www.depaul.edu/ | grep -i strict-transport
+
+strict-transport-security: max-age=63072000; includeSubDomains; preload
+
+
+$ curl -sSI https://github.com/ | grep -i strict-transport
+
+strict-transport-security: max-age=31536000; includeSubdomains; preload
+
+
+
+--- What the origin sees when the client LIES about X-Forwarded-For ---
+
+$ curl -sS https://httpbingo.org/headers -H 'X-Forwarded-For: 10.0.0.1'
+{
+  "headers": {
+    "Accept": [
+      "*/*"
+    ],
+    "Host": [
+      "httpbingo.org"
+    ],
+    "User-Agent": [
+      "curl/8.5.0"
+    ],
+    "Via": [
+      "2 fly.io, 2 fly.io"
+    ],
+    "X-Forwarded-For": [
+      "10.0.0.1, 70.37.26.185, 66.241.125.232"
+    ],
+    "X-Forwarded-Port": [
+      "443"
+    ],
+    "X-Forwarded-Proto": [
+      "https"
+    ],
+    "X-Forwarded-Ssl": [
+      "on"
+    ],
+    "X-Request-Start": [
+      "t=1786825568541680"
+    ]
+  }
+}
+
+# NOTE: 10.0.0.1 was INVENTED by the client and arrives LEFTMOST. Only the entries
+#       appended by proxies you operate are trustworthy - count from the RIGHT.

@@ -1,0 +1,685 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week 4: HTTP at Speed, Trust on the Wire, and First Deploy — class notes - CSC 436</title>
+<link rel="stylesheet" href="../../assets/course.css">
+<link rel="icon" type="image/svg+xml" href="../../assets/course-icon.svg">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header><a class="course-name" href="../../index.html">CSC 436</a>
+<nav aria-label="Course">
+<a href="../../docs/getting-started.html">Start here</a>
+<a href="../../docs/new_syllabus.html">Syllabus</a>
+<a href="../../docs/course-map.html">Course map</a>
+<a href="../../final-project/index.html">Final project</a>
+</nav></header>
+<main id="main">
+<p class="source-link"><a href="class-notes.md" download>Download Markdown source</a></p>
+<h1 id="week-4-http-at-speed-trust-on-the-wire-and-first-deploy--class-notes">Week 4: HTTP at Speed, Trust on the Wire, and First Deploy — class notes</h1>
+<p>These notes contain the student-visible teaching material and examples. Complete the exercises individually. Instructor delivery notes and answer keys are not included.</p>
+<h2 id="weekly-session--http-at-speed-trust-on-the-wire-and-first-deploy">Weekly session — HTTP at Speed, Trust on the Wire, and First Deploy</h2>
+<p>Teaching, individual practice, and the end-of-class brief</p>
+<h2 id="block-a--http-and-tls">Block A — HTTP and TLS</h2>
+<h3 id="you-ship-over-http-every-day-you-have-never-chosen-a-version">You ship over HTTP every day. You have never chosen a version</h3>
+<ul>
+<li>Your app speaks HTTP, but you did not pick <code>1.1</code>, <code>2</code>, or <code>3</code> — something else did</li>
+<li>The version is negotiated <strong>on the wire</strong>, during the TLS handshake, by a step called <strong>ALPN</strong></li>
+<li>It is not in your source code, your framework config, or your Dockerfile</li>
+<li>Same methods, same status codes, same headers in every version — only the <strong>delivery</strong> changed</li>
+</ul>
+<blockquote>
+<p><strong>Key idea</strong></p>
+<p>The HTTP version is a property of the connection, not of the code. To learn it, ask
+the connection — DevTools, <code>curl -v</code>, or the server&#39;s logs.</p>
+</blockquote>
+<h3 id="http11-one-answer-at-a-time-per-connection">HTTP/1.1: one answer at a time per connection</h3>
+<ul>
+<li>A 1.1 connection carries <strong>one request/response at a time</strong>, in order</li>
+<li>Keep-alive reuses the socket, so request two skips the TCP and TLS setup</li>
+<li>But a slow response blocks everything queued behind it — <strong>head-of-line blocking</strong></li>
+<li>Browsers worked around it by opening about <strong>6 connections per site</strong></li>
+<li>Six connections means six handshakes and six of everything else</li>
+</ul>
+<p><strong>Sources</strong></p>
+<ul>
+<li>MDN — <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Connection_management_in_HTTP_1.x">Connection management in HTTP/1.x</a></li>
+<li>IETF — <a href="https://www.rfc-editor.org/rfc/rfc9112.html">RFC 9112, HTTP/1.1</a></li>
+</ul>
+<h3 id="one-lane-or-many-lanes-on-one-road">One lane, or many lanes on one road</h3>
+<p><img src="../../assets/class-notes/week04-session-s4-1.svg" alt="Two rows compared. Top row, HTTP/1.1: three requests on one connection are served strictly in order, and a slow second response blocks the third. Bottom row, HTTP slash 2: the same three requests become three streams whose frames are interleaved on a single connection, so the slow response delays only itself."></p>
+<p><em>HTTP/1.1 serialises responses on one connection; HTTP/2 interleaves them as frames on independent streams</em></p>
+<h3 id="http2-same-meaning-new-envelope-one-connection">HTTP/2: same meaning, new envelope, one connection</h3>
+<ul>
+<li>Requests become <strong>binary frames</strong>, each tagged with a stream ID, all on <strong>one</strong> TCP connection</li>
+<li>Headers are compressed (<strong>HPACK</strong>), so a big repeated <code>Cookie</code> header costs bytes once</li>
+<li>Your handlers do not change: HTTP/2 is a delivery upgrade, not an API change</li>
+<li>The catch: TCP delivers bytes strictly in order, so <strong>one lost packet stalls every stream</strong></li>
+</ul>
+<blockquote>
+<p><strong>Caution</strong></p>
+<p>HTTP/2 fixed head-of-line blocking at the HTTP layer and inherited it at the TCP
+layer. On a lossy network one connection can lose to six HTTP/1.1 connections.</p>
+</blockquote>
+<p><strong>Sources</strong></p>
+<ul>
+<li>IETF — <a href="https://www.rfc-editor.org/rfc/rfc9113.html">RFC 9113, HTTP/2</a> · <a href="https://www.rfc-editor.org/rfc/rfc9110.html">RFC 9110, HTTP Semantics</a></li>
+</ul>
+<h3 id="http3-the-same-idea-on-a-transport-that-knows-about-streams">HTTP/3: the same idea on a transport that knows about streams</h3>
+<ul>
+<li>HTTP/3 runs over <strong>QUIC</strong>, a transport built on <strong>UDP</strong></li>
+<li>QUIC knows about streams, so a lost packet stalls <strong>only its own stream</strong></li>
+<li>TLS 1.3 is built into QUIC, so setup takes fewer round trips</li>
+<li><strong>Connection migration:</strong> Wi-Fi to cellular keeps the same connection alive</li>
+<li>Discovery: the server advertises <code>alt-svc: h3=&quot;:443&quot;</code>; the next connection tries QUIC, and falls back to TCP if UDP is blocked</li>
+</ul>
+<p><strong>Sources</strong></p>
+<ul>
+<li>IETF — <a href="https://www.rfc-editor.org/rfc/rfc9000.html">RFC 9000, QUIC</a> · <a href="https://www.rfc-editor.org/rfc/rfc9114.html">RFC 9114, HTTP/3</a></li>
+<li>MDN — <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Alt-Svc"><code>Alt-Svc</code></a></li>
+</ul>
+<h3 id="the-three-versions-at-a-glance">The three versions at a glance</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th></th><th>HTTP/1.1</th><th>HTTP/2</th><th>HTTP/3</th></tr></thead><tbody><tr><td>Transport</td><td>TCP</td><td>TCP</td><td>QUIC over UDP</td></tr><tr><td>Requests per connection</td><td>One at a time</td><td>Many, interleaved</td><td>Many, independent</td></tr><tr><td>Head-of-line blocking</td><td>HTTP <strong>and</strong> TCP</td><td>TCP only</td><td>Removed between streams</td></tr><tr><td>Format on the wire</td><td>Text</td><td>Binary frames</td><td>Binary frames</td></tr><tr><td>Encryption</td><td>Optional (TLS)</td><td>TLS in practice</td><td>TLS 1.3 built in</td></tr><tr><td>Your app code changes</td><td>—</td><td>None</td><td>None</td></tr></tbody></table></div>
+<h3 id="alpn-the-version-is-chosen-inside-the-tls-handshake">ALPN: the version is chosen inside the TLS handshake</h3>
+<pre><code class="language-console">$ curl -sS -o /dev/null -v --http2 https://www.depaul.edu/
+
+* ALPN: curl offers h2,http/1.1
+* SSL connection using TLSv1.3 / TLS_AES_128_GCM_SHA256 / X25519
+* ALPN: server accepted h2
+* using HTTP/2
+&gt; GET / HTTP/2
+&lt; HTTP/2 200
+</code></pre>
+<blockquote>
+<p><strong>Key idea</strong></p>
+<p>The client offers a list, the server picks one, and the choice is made <strong>before a
+single HTTP byte moves</strong>. That is why HTTP versions and TLS are one topic.</p>
+</blockquote>
+<h3 id="tls-privacy-integrity-and-a-name-you-can-trust">TLS: privacy, integrity, and a name you can trust</h3>
+<p>The handshake, the certificate, the chain — and how to read all three on Windows.</p>
+<h3 id="what-tls-actually-gives-you-and-the-one-thing-it-does-not">What TLS actually gives you, and the one thing it does not</h3>
+<ul>
+<li><strong>Confidentiality</strong> — an observer on the Wi-Fi sees ciphertext, not your request</li>
+<li><strong>Integrity</strong> — tampering is detected, not merely discouraged</li>
+<li><strong>Server authentication</strong> — you are talking to the owner of that <strong>name</strong></li>
+<li>It does <strong>not</strong> say the site is honest, safe, or well run</li>
+</ul>
+<blockquote>
+<p><strong>Caution</strong></p>
+<p>A padlock means the connection is private. A phishing site with a free certificate has
+a padlock too. TLS authenticates the <strong>name</strong>, never the intent behind it.</p>
+</blockquote>
+<p><strong>Sources</strong></p>
+<ul>
+<li>IETF — <a href="https://www.rfc-editor.org/rfc/rfc8446.html">RFC 8446, TLS 1.3</a></li>
+</ul>
+<h3 id="one-round-trip-and-where-the-certificate-shows-up">One round trip, and where the certificate shows up</h3>
+<p><img src="../../assets/class-notes/week04-session-s11-1.svg" alt="A TLS 1.3 handshake sequence between client and server. The client sends ClientHello with its key share, the SNI server name and the ALPN protocol list, all in the clear. The server replies with ServerHello and its key share, then, now encrypted, its Certificate, CertificateVerify and Finished. The client sends Finished and application data follows. Total: one round trip."></p>
+<p><em>TLS 1.3 completes in one round trip; the certificate arrives in the server&#39;s first flight and is encrypted</em></p>
+<p><strong>Sources</strong></p>
+<ul>
+<li>IETF — <a href="https://www.rfc-editor.org/rfc/rfc8446.html">RFC 8446 §2, protocol overview</a></li>
+</ul>
+<h3 id="a-certificate-is-a-signed-public-statement-about-a-name">A certificate is a signed, public statement about a name</h3>
+<ul>
+<li>You make a <strong>private key</strong>. It never leaves your server; nobody else ever sees it</li>
+<li>A <strong>certificate authority (CA)</strong> checks you control the domain, then <strong>signs</strong> your public key + names</li>
+<li>The certificate is public by design — every visitor receives it</li>
+<li>Browsers match the hostname against the <strong>Subject Alternative Name (SAN)</strong> list, not <code>CN</code></li>
+<li>A wildcard <code>*.example.edu</code> covers <strong>one</strong> label: <code>api.example.edu</code> ✓, <code>a.b.example.edu</code> ✗</li>
+</ul>
+<blockquote>
+<p><strong>Key idea</strong></p>
+<p>The only secret is the private key. A certificate in a screenshot is harmless; a
+private key in a screenshot is a compromise.</p>
+</blockquote>
+<p><strong>Sources</strong></p>
+<ul>
+<li>IETF — <a href="https://www.rfc-editor.org/rfc/rfc9525.html">RFC 9525, service identity in TLS</a></li>
+</ul>
+<h3 id="three-links-and-only-two-of-them-travel">Three links, and only two of them travel</h3>
+<p><img src="../../assets/class-notes/week04-session-s13-1.svg" alt="A chain of trust diagram. On the left, a root CA certificate labelled already installed in the client trust store, never sent on the wire. It signs an intermediate CA certificate, which signs the leaf certificate for your domain. A bracket underneath marks the leaf and the intermediate as the part your server must send. A note says the client builds the path upward and stops when it reaches a certificate it already trusts."></p>
+<p><em>The server sends the leaf and the intermediates; the root is already on the client and is never sent</em></p>
+<h3 id="demo-inspect-a-certificate-on-windows-no-openssl">Demo: inspect a certificate on Windows, no OpenSSL</h3>
+<h4 id="steps">Steps</h4>
+<ol>
+<li>PowerShell in <code>weeks/week04/samples</code></li>
+<li><code>.\tls-inspect.ps1 www.depaul.edu</code></li>
+<li>Then <code>.\tls-inspect.ps1 expired.badssl.com</code></li>
+</ol>
+<h4 id="expected-observations">Expected observations</h4>
+<ul>
+<li>DePaul <code>None</code>; expired <code>NotTimeValid</code></li>
+</ul>
+<h4 id="fallback">Fallback</h4>
+<p>Show the printouts on the next slides (<code>tls-inspect-captures.txt</code>).</p>
+<p><strong>Sources</strong></p>
+<ul>
+<li>Course — <a href="samples/tls-inspect.ps1">tls-inspect.ps1</a> · <a href="samples/tls-inspect-captures.txt">captured output</a></li>
+</ul>
+<h3 id="windows-printout-the-connection-and-the-leaf-certificate">Windows printout: the connection and the leaf certificate</h3>
+<pre><code class="language-console">PS&gt; .\tls-inspect.ps1 www.depaul.edu
+Protocol   : Tls12
+Cipher     : TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+== Leaf certificate ==
+Subject    : CN=www.depaul.edu
+Issuer     : CN=YR1, O=Let&#39;s Encrypt, C=US
+NotBefore  : 2026-09-22 17:53
+NotAfter   : 2026-12-21 16:52
+DaysLeft   : 81
+SAN        : DNS:www.depaul.edu
+Thumbprint : ECD4BF7AE268F126C5F5E667E44396890BFC2610
+</code></pre>
+<ul>
+<li><code>NotAfter − NotBefore</code> = <strong>90 days</strong>: renewal has to be automated</li>
+</ul>
+<h3 id="windows-printout-the-chain-this-device-built-and-the-verdict">Windows printout: the chain this device built, and the verdict</h3>
+<pre><code class="language-console">== Chain built by this device (0 = leaf) ==
+Depth Subject                                                   NotAfter
+----- -------                                                   --------
+    0 CN=www.depaul.edu                                         2026-12-21
+    1 CN=YR1, O=Let&#39;s Encrypt, C=US                             2028-09-02
+    2 CN=Root YR, O=ISRG, C=US                                  2032-09-02
+    3 CN=ISRG Root X1, O=Internet Security Research Group, C=US 2035-06-04
+
+== Verdict ==
+PolicyErrors : None
+ChainStatus  : OK
+</code></pre>
+<ul>
+<li>Depth <code>3</code> is the <strong>root</strong> — it came from this device&#39;s trust store, not the server</li>
+<li><code>PolicyErrors : None</code> is the same decision Edge makes before it draws the padlock</li>
+</ul>
+<h3 id="windows-where-trusted-actually-lives">Windows: where &quot;trusted&quot; actually lives</h3>
+<pre><code class="language-powershell">PS&gt; Get-ChildItem Cert:\LocalMachine\Root |
+&gt;&gt;   Where-Object Subject -like &#39;*ISRG Root X1*&#39; |
+&gt;&gt;   Format-List Subject, Thumbprint, NotAfter
+
+Subject    : CN=ISRG Root X1, O=Internet Security Research Group, C=US
+Thumbprint : CABD2A79A1076A31F21D253635CB039D4329A5E8
+NotAfter   : 6/4/2035 6:04:38 AM
+
+PS&gt; certutil -dump .\depaul.cer | Select-String &#39;Subject|NotAfter|DNS&#39;
+</code></pre>
+<ul>
+<li>GUI equivalent: run <code>certlm.msc</code> → <strong>Trusted Root Certification Authorities</strong></li>
+<li>Windows downloads roots <strong>on demand</strong>, so the list grows as you visit sites</li>
+<li><code>.\tls-inspect.ps1 www.depaul.edu -SaveCertificate depaul.cer</code> creates the file for <code>certutil</code></li>
+</ul>
+<h3 id="windows-no-command-line-edges-certificate-viewer">Windows, no command line: Edge&#39;s certificate viewer</h3>
+<h4 id="five-clicks">Five clicks</h4>
+<ol>
+<li>Open <code>https://www.depaul.edu</code></li>
+<li>Click the icon left of the address bar</li>
+<li><strong>Connection is secure</strong></li>
+<li>Click the certificate icon</li>
+<li><strong>Details</strong> tab: issuer, validity, SAN, and the chain</li>
+</ol>
+<h4 id="what-to-point-at">What to point at</h4>
+<ul>
+<li><strong>Issued to / by</strong> — Subject and Issuer</li>
+<li><strong>Valid from / to</strong> — the 90-day window</li>
+<li><strong>Certificate Subject Alternative Name</strong> — the names covered</li>
+<li><strong>Certificate Hierarchy</strong> — root, intermediate, leaf</li>
+</ul>
+<h3 id="four-failures-and-how-each-client-reports-them">Four failures, and how each client reports them</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th><code>*.badssl.com</code> site</th><th>Edge shows <code>NET::ERR_CERT_…</code></th><th>PowerShell 7 says</th></tr></thead><tbody><tr><td><code>expired</code></td><td><code>DATE_INVALID</code></td><td><code>NotTimeValid</code></td></tr><tr><td><code>wrong.host</code></td><td><code>COMMON_NAME_INVALID</code></td><td><code>NameMismatch</code></td></tr><tr><td><code>self-signed</code></td><td><code>AUTHORITY_INVALID</code></td><td><code>UntrustedRoot</code></td></tr><tr><td><code>incomplete-chain</code></td><td>often <strong>loads</strong> (the trap)</td><td>often <strong>passes</strong></td></tr></tbody></table></div>
+<h3 id="reference-for-macos-and-linux-the-same-checks-with-openssl">Reference for macOS and Linux: the same checks with OpenSSL</h3>
+<pre><code class="language-bash"># Leaf fields (subject, issuer, dates, SAN)
+openssl s_client -connect www.depaul.edu:443 -servername www.depaul.edu \
+  &lt;/dev/null 2&gt;/dev/null | openssl x509 -noout -subject -issuer -dates \
+  -ext subjectAltName
+
+# Full chain the server sends, and the verify result
+openssl s_client -connect www.depaul.edu:443 -servername www.depaul.edu \
+  -showcerts &lt;/dev/null
+
+# ALPN: which HTTP version does the server pick?
+openssl s_client -connect www.depaul.edu:443 -servername www.depaul.edu \
+  -alpn h2,http/1.1 &lt;/dev/null 2&gt;/dev/null | grep -i alpn
+</code></pre>
+<ul>
+<li>Always pass <code>-servername</code>: without SNI, a shared host may return the <strong>wrong</strong> certificate</li>
+</ul>
+<h3 id="keeping-https-working-automate-then-watch-the-automation">Keeping HTTPS working: automate, then watch the automation</h3>
+<ul>
+<li>Certificates now last <strong>90 days or less</strong>, so renewal must be automatic</li>
+<li><strong>ACME</strong> (Let&#39;s Encrypt and most hosts) proves you control the domain, then issues and renews</li>
+<li>Platforms like Azure App Service, Netlify, and Vercel run ACME for you — you just add the domain</li>
+<li>Automation fails silently, so monitor <strong>days until expiry</strong> (the <code>DaysLeft</code> field) and alert well before zero</li>
+<li><strong>HSTS</strong> (<code>Strict-Transport-Security</code>) tells browsers to use HTTPS only — and makes an expired cert a hard outage</li>
+</ul>
+<p><strong>Sources</strong></p>
+<ul>
+<li>Let&#39;s Encrypt — <a href="https://letsencrypt.org/how-it-works/">How it works</a></li>
+<li>MDN — <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Strict-Transport-Security"><code>Strict-Transport-Security</code></a></li>
+</ul>
+<h3 id="three-claims-which-hold-up-and-what-evidence-settles-each">Three claims. Which hold up, and what evidence settles each?</h3>
+<ol>
+<li>&quot;We enabled HTTP/2, so a lost packet no longer blocks other responses.&quot;</li>
+<li>&quot;The login page has a padlock, so the site is safe to trust with my password.&quot;</li>
+<li>&quot;It loads in Edge on my Windows laptop, so our certificate chain is configured correctly.&quot;</li>
+</ol>
+<h2 id="block-b--frontend-to-api-with-axios">Block B — Frontend to API with axios</h2>
+<h3 id="calling-your-api-from-the-frontend-with-axios">Calling your API from the frontend with axios</h3>
+<p>One configured client, one function per endpoint, one error type</p>
+<p>Your React app and your API are two programs on two ports. This block is the code
+in the browser that connects them.</p>
+<h3 id="two-programs-two-ports-one-http-conversation">Two programs, two ports, one HTTP conversation</h3>
+<p><img src="../../assets/class-notes/week04-session-s24-1.svg" alt="Architecture of the sample. On the left, the browser runs the React app served by Vite at localhost port 5173. Inside it, components call typed functions in incidents.ts, which use one axios instance from client.ts. Arrows labelled GET, POST, PUT, PATCH and DELETE with JSON go to the right, to an Express API at localhost port 3001, which returns JSON responses with CORS headers. A note says the two different ports make this a cross-origin request, covered in Block C."></p>
+<p><em>The browser loads the app from one origin and calls the API on another; axios is the code that makes those calls</em></p>
+<h3 id="fetch-is-built-in-why-reach-for-axios">fetch is built in. Why reach for axios?</h3>
+<h4 id="fetch-built-in"><code>fetch</code> (built in)</h4>
+<ul>
+<li>No install, works everywhere</li>
+<li>A <code>404</code> or <code>500</code> <strong>resolves</strong>; you must check <code>res.ok</code></li>
+<li>You call <code>JSON.stringify</code> and <code>res.json()</code> yourself</li>
+<li>Timeouts need <code>AbortSignal.timeout()</code></li>
+</ul>
+<h4 id="axios-npm-package"><code>axios</code> (npm package)</h4>
+<ul>
+<li><strong>Rejects</strong> on any non-2xx status</li>
+<li>Sends objects as JSON; parses JSON into <code>data</code></li>
+<li><code>baseURL</code>, <code>timeout</code>, <code>params</code> built in</li>
+<li><strong>Interceptors</strong> run on every request and response</li>
+</ul>
+<h3 id="step-1-one-configured-client-for-the-whole-app">Step 1: one configured client for the whole app</h3>
+<pre><code class="language-ts">import axios from &quot;axios&quot;;
+
+export const API_URL =
+  import.meta.env?.VITE_API_URL ?? &quot;http://localhost:3001/api&quot;;
+
+export const api = axios.create({
+  baseURL: API_URL,  // every call is relative to this
+  timeout: 4000,     // fail fast instead of spinning forever
+  headers: { Accept: &quot;application/json&quot; },
+});
+</code></pre>
+<ul>
+<li>Every request in the app goes through <code>api</code> — never <code>axios.get</code> with a full URL</li>
+<li>Change the base URL <strong>once</strong>, by environment: <code>.env</code> → <code>VITE_API_URL=https://api.example.edu/api</code></li>
+</ul>
+<h3 id="step-2-one-function-per-endpoint">Step 2: one function per endpoint</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>Method</th><th>Path</th><th>Function in <code>incidents.ts</code></th><th>Success</th></tr></thead><tbody><tr><td><code>GET</code></td><td><code>/incidents?status=&amp;q=</code></td><td><code>listIncidents(filters, signal)</code></td><td><code>200</code> + <code>{ items, count }</code></td></tr><tr><td><code>GET</code></td><td><code>/incidents/:id</code></td><td><code>getIncident(id)</code></td><td><code>200</code> + incident</td></tr><tr><td><code>POST</code></td><td><code>/incidents</code></td><td><code>createIncident({ title, service })</code></td><td><code>201</code> + <code>Location</code></td></tr><tr><td><code>PUT</code></td><td><code>/incidents/:id</code></td><td><code>replaceIncident(incident)</code></td><td><code>200</code> + incident</td></tr><tr><td><code>PATCH</code></td><td><code>/incidents/:id</code></td><td><code>updateStatus(id, status)</code></td><td><code>200</code> + incident</td></tr><tr><td><code>DELETE</code></td><td><code>/incidents/:id</code></td><td><code>deleteIncident(id)</code></td><td><code>204</code>, no body</td></tr></tbody></table></div>
+<h3 id="reading-get-with-query-parameters">Reading: GET with query parameters</h3>
+<pre><code class="language-ts">// GET /incidents?status=…&amp;q=…
+export async function listIncidents(filters: Filters = {},
+                                    signal?: AbortSignal) {
+  const { data } = await api.get&lt;{ items: Incident[]; count: number }&gt;(
+    &quot;/incidents&quot;, { params: filters, signal });
+  return data.items;
+}
+
+// GET /incidents/:id
+export async function getIncident(id: string) {
+  const { data } = await api.get&lt;Incident&gt;(
+    `/incidents/${encodeURIComponent(id)}`);
+  return data;
+}
+</code></pre>
+<ul>
+<li><code>params</code> builds and encodes the query: <code>?status=monitoring&amp;q=wi+fi</code></li>
+</ul>
+<h3 id="creating-post-sends-a-body-and-gets-back-201--location">Creating: POST sends a body and gets back 201 + Location</h3>
+<pre><code class="language-ts">// POST /incidents — axios serializes the object to JSON and sets Content-Type
+export async function createIncident(input: NewIncident) {
+  const response = await api.post&lt;Incident&gt;(&quot;/incidents&quot;, input);
+  return { incident: response.data,
+           location: response.headers[&quot;location&quot;] as string };
+}
+
+// usage in a component
+await createIncident({ title: &quot;Printers offline&quot;, service: &quot;printing&quot; });
+</code></pre>
+<ul>
+<li>Pass a plain object: axios sends JSON <strong>and</strong> sets <code>Content-Type: application/json</code></li>
+<li>Method name = HTTP verb, first argument = path, second = body</li>
+</ul>
+<h3 id="updating-and-deleting">Updating and deleting</h3>
+<pre><code class="language-ts">// PUT — send the whole editable record
+export async function replaceIncident(incident: Incident) {
+  const { id, title, service, status } = incident;
+  const url = `/incidents/${encodeURIComponent(id)}`;
+  return (await api.put&lt;Incident&gt;(url, { title, service, status })).data;
+}
+// PATCH — send only what changed
+export async function updateStatus(id: string, status: Status) {
+  const url = `/incidents/${encodeURIComponent(id)}`;
+  return (await api.patch&lt;Incident&gt;(url, { status })).data;
+}
+// DELETE — 204, no body
+export async function deleteIncident(id: string) {
+  await api.delete(`/incidents/${encodeURIComponent(id)}`);
+}
+</code></pre>
+<h3 id="what-comes-back-response-or-one-of-two-kinds-of-error">What comes back: <code>response</code>, or one of two kinds of error</h3>
+<ul>
+<li>Success (2xx): <code>response.data</code> is parsed JSON; also <code>status</code> and <code>headers</code></li>
+<li><strong>The server answered</strong> with 4xx/5xx: axios rejects; <code>error.response</code> holds status and body</li>
+<li><strong>No answer at all</strong>: server down, DNS, timeout — or <strong>blocked by CORS</strong>; <code>error.response</code> is <code>undefined</code></li>
+<li>The browser hides the reason for a CORS block from your code on purpose — read the <strong>console</strong></li>
+</ul>
+<blockquote>
+<p><strong>Key idea</strong></p>
+<p><code>error.response</code> present → read the server&#39;s message. Absent → it is a network
+problem, and the console and Network tab hold the real reason.</p>
+</blockquote>
+<h3 id="interceptors-code-that-runs-on-every-request-and-response">Interceptors: code that runs on every request and response</h3>
+<pre><code class="language-ts">api.interceptors.request.use((config) =&gt; {
+  config.headers.set(&quot;X-Request-Id&quot;, crypto.randomUUID());
+  return config;
+});
+
+api.interceptors.response.use(
+  (response) =&gt; response,                    // 2xx: pass through
+  (error) =&gt; Promise.reject(toApiError(error)), // anything else: normalize
+);
+</code></pre>
+<ul>
+<li><strong>Request</strong> interceptor: add headers every call needs — a request ID, later an auth token</li>
+<li><strong>Response</strong> interceptor: turn every failure into <strong>one</strong> error type the UI understands</li>
+<li>The sample also logs each call into an in-app activity table (see <code>client.ts</code>)</li>
+</ul>
+<h3 id="one-error-type-for-the-whole-ui">One error type for the whole UI</h3>
+<pre><code class="language-ts">export function toApiError(error: unknown): ApiError {
+  if (error instanceof ApiError) return error;  // already normalized
+  if (axios.isCancel(error))
+    return new ApiError(&quot;canceled&quot;, &quot;Request canceled&quot;);
+  if (!(error instanceof AxiosError))
+    return new ApiError(&quot;network&quot;, String(error));
+  if (error.code === &quot;ECONNABORTED&quot; || error.code === &quot;ETIMEDOUT&quot;)
+    return new ApiError(&quot;timeout&quot;, `No answer in ${api.defaults.timeout} ms`);
+  if (error.response) {                         // server answered 4xx/5xx
+    const body = error.response.data as ErrorBody;
+    return new ApiError(&quot;http&quot;, body?.error?.message ?? error.message,
+                        error.response.status, body?.error?.code);
+  }
+  return new ApiError(&quot;network&quot;,                // down, DNS, TLS, or CORS
+    &quot;Network error — is the API running and is this origin allowed (CORS)?&quot;);
+}
+</code></pre>
+<h3 id="four-kinds-of-failure-four-different-messages">Four kinds of failure, four different messages</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th><code>kind</code></th><th>What happened</th><th>What the user should see</th></tr></thead><tbody><tr><td><code>http</code></td><td>Server answered 4xx/5xx</td><td>The server&#39;s message: &quot;title must be 3-120 characters&quot;</td></tr><tr><td><code>timeout</code></td><td>No answer within <code>timeout</code></td><td>&quot;The API is slow — try again&quot;</td></tr><tr><td><code>network</code></td><td>No answer: down, offline, <strong>CORS</strong></td><td>&quot;Can&#39;t reach the API&quot;; details in the console</td></tr><tr><td><code>canceled</code></td><td>Your code aborted it</td><td>Nothing — it was intentional</td></tr></tbody></table></div>
+<h3 id="calling-it-from-react-and-cancelling-stale-requests">Calling it from React, and cancelling stale requests</h3>
+<pre><code class="language-tsx">useEffect(() =&gt; {
+  const controller = new AbortController();
+  setLoading(true);
+  listIncidents({ status, q }, controller.signal)
+    .then((items) =&gt; { setIncidents(items); setError(&quot;&quot;); })
+    .catch((err: ApiError) =&gt; {
+      if (err.kind !== &quot;canceled&quot;) setError(describe(err));
+    })
+    .finally(() =&gt; { if (!controller.signal.aborted) setLoading(false); });
+  return () =&gt; controller.abort();  // on filter change or unmount
+}, [status, q, reload]);
+</code></pre>
+<ul>
+<li>Without the abort, a <strong>slow old</strong> answer can arrive last and overwrite the new one</li>
+<li>Mutations use one wrapper: <code>run(() =&gt; updateStatus(id, &quot;resolved&quot;))</code>, then reload the list</li>
+</ul>
+<h3 id="what-the-wire-actually-carried-a-create-and-a-rejected-create">What the wire actually carried: a create, and a rejected create</h3>
+<pre><code class="language-console">$ curl -i -X POST localhost:3001/api/incidents \
+    -H &#39;Content-Type: application/json&#39; -H &#39;Origin: http://localhost:5173&#39; \
+    -d &#39;{&quot;title&quot;:&quot;Library printers offline&quot;,&quot;service&quot;:&quot;printing&quot;}&#39;
+HTTP/1.1 201 Created
+Access-Control-Allow-Origin: http://localhost:5173
+Access-Control-Expose-Headers: Location,X-Request-Id
+Location: /api/incidents/1bd5e680-a677-44b2-ac5f-9d616759c1b5
+{&quot;id&quot;:&quot;1bd5e680-…&quot;,&quot;title&quot;:&quot;Library printers offline&quot;,…}
+
+$ curl -i -X POST localhost:3001/api/incidents \
+    -H &#39;Content-Type: application/json&#39; -d &#39;{&quot;title&quot;:&quot;&quot;,&quot;service&quot;:&quot;toaster&quot;}&#39;
+HTTP/1.1 400 Bad Request
+{&quot;error&quot;:{&quot;code&quot;:&quot;validation_failed&quot;,
+          &quot;message&quot;:&quot;title must be 3-120 characters&quot;}}
+</code></pre>
+<h3 id="demo-watch-axios-talk-to-the-api">Demo: watch axios talk to the API</h3>
+<h4 id="steps-1">Steps</h4>
+<ol>
+<li>Backend: <code>npm start</code>; frontend: <code>npm run dev</code></li>
+<li>Open <code>localhost:5173</code>, DevTools → Network</li>
+<li>Create, rename (PUT), change status (PATCH), delete</li>
+<li>Slow-request panel: Cancel, then let it time out</li>
+</ol>
+<h4 id="expected-observations-1">Expected observations</h4>
+<ul>
+<li><code>OPTIONS</code> preflights, then <code>201</code>, <code>200</code>, <code>204</code></li>
+</ul>
+<h4 id="fallback-1">Fallback</h4>
+<p>In <code>frontend/</code>, run <code>npm test</code>.</p>
+<p><strong>Sources</strong></p>
+<ul>
+<li>Course — <a href="samples/campuspulse-fullstack/index.html">campuspulse-fullstack sample</a></li>
+</ul>
+<h3 id="predict-what-the-user-sees-and-which-part-of-the-code-decides-it">Predict what the user sees, and which part of the code decides it</h3>
+<ol>
+<li>The API is stopped and the page loads.</li>
+<li>A user submits a new incident with the title &quot;Hi&quot;.</li>
+<li>A user types &quot;wifi&quot; quickly into the search box on a slow network.</li>
+</ol>
+<h2 id="block-c--backend-api-and-cors">Block C — Backend API and CORS</h2>
+<h3 id="building-the-api-the-frontend-calls-express-and-cors">Building the API the frontend calls: Express and CORS</h3>
+<p>Routes, status codes, one error shape, and the browser rule that decides who may read the answer</p>
+<p>Block B wrote the calls. This block writes the program that answers them — and the
+one browser rule that can make a perfectly good answer unreadable.</p>
+<h3 id="any-language-works-the-contract-is-the-same-four-things">Any language works: the contract is the same four things</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>You need</th><th>Express (Node)</th><th>FastAPI (Python)</th><th>ASP.NET Core (C#)</th></tr></thead><tbody><tr><td>A route</td><td><code>app.get(path, h)</code></td><td><code>@app.get(path)</code></td><td><code>app.MapGet(path, h)</code></td></tr><tr><td>JSON body in</td><td><code>req.body</code></td><td>typed parameter</td><td>typed parameter</td></tr><tr><td>Status + JSON out</td><td><code>res.status(201).json(x)</code></td><td><code>status_code=201</code></td><td><code>Results.Created(…)</code></td></tr><tr><td>Allow an origin</td><td><code>cors(…)</code></td><td><code>CORSMiddleware</code></td><td><code>UseCors(…)</code></td></tr></tbody></table></div>
+<h3 id="setup-two-packages-one-entry-point-one-port">Setup: two packages, one entry point, one port</h3>
+<pre><code class="language-js">// Entry point: node src/server.mjs  (PORT and CORS_ORIGINS are optional)
+import { createApp } from &quot;./app.mjs&quot;;
+import { parseOrigins } from &quot;./cors-options.mjs&quot;;
+
+const port = Number(process.env.PORT ?? 3001);
+const allowedOrigins = parseOrigins(process.env.CORS_ORIGINS);
+const app = createApp({ allowedOrigins, log: (line) =&gt; console.log(line) });
+
+app.listen(port, () =&gt; {
+  console.log(`CampusPulse API on http://localhost:${port}/api`);
+  console.log(`CORS allowlist: ${allowedOrigins.join(&quot;, &quot;)}`);
+});
+</code></pre>
+<ul>
+<li><code>npm install express cors</code> · <code>npm start</code> · <code>npm run dev</code> restarts on save (<code>node --watch</code>)</li>
+<li>Port and allowlist come from the <strong>environment</strong>, so production changes config, not code</li>
+</ul>
+<h3 id="middleware-runs-top-to-bottom-so-order-is-a-design-decision">Middleware runs top to bottom, so order is a design decision</h3>
+<pre><code class="language-js">  app.use(cors(corsOptions(allowedOrigins)));  // answers allowed preflights
+  // A refused preflight falls through to here: 204 with no CORS headers.
+  app.options(&quot;/{*any}&quot;, (req, res) =&gt; res.status(204).end());
+  app.use(express.json({ limit: &quot;16kb&quot; }));     // JSON body -&gt; req.body
+  // ...request-id middleware (sets X-Request-Id on every response)...
+  app.get(&quot;/api/healthz&quot;, (req, res) =&gt; res.json({ ok: true }));
+  app.use(&quot;/api/incidents&quot;, incidentsRouter(store));
+  // ...then the JSON 404, then the error handler (slide 7)
+</code></pre>
+<ul>
+<li><strong>CORS first</strong>, so even a 404 or a 400 carries the headers the browser needs to read it</li>
+<li><code>express.json()</code> before routes, or <code>req.body</code> is <code>undefined</code></li>
+</ul>
+<h3 id="one-resource-five-methods-and-the-status-code-each-returns">One resource, five methods, and the status code each returns</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>Method + path</th><th>Does</th><th>Success</th><th>Fails with</th></tr></thead><tbody><tr><td><code>GET /incidents?status=&amp;q=</code></td><td>List</td><td><code>200</code> <code>{ items, count }</code></td><td><code>400</code></td></tr><tr><td><code>GET /incidents/:id</code></td><td>Read one</td><td><code>200</code></td><td><code>404</code></td></tr><tr><td><code>POST /incidents</code></td><td>Create</td><td><code>201</code> + <code>Location</code></td><td><code>400</code></td></tr><tr><td><code>PUT /incidents/:id</code></td><td>Replace</td><td><code>200</code></td><td><code>400</code>, <code>404</code></td></tr><tr><td><code>PATCH /incidents/:id</code></td><td>Set status</td><td><code>200</code></td><td><code>400</code>, <code>404</code></td></tr><tr><td><code>DELETE /incidents/:id</code></td><td>Remove</td><td><code>204</code>, no body</td><td><code>404</code></td></tr></tbody></table></div>
+<h3 id="a-route-handler-validate-act-then-answer-with-status--json">A route handler: validate, act, then answer with status + JSON</h3>
+<pre><code class="language-js">// POST /api/incidents — create; 201 + Location header
+router.post(&quot;/&quot;, (req, res) =&gt; {
+  const body = requireObject(req.body);
+  const incident = store.insert({
+    title: readTitle(body),
+    service: readService(body),
+    status: &quot;investigating&quot;,
+  });
+  res.status(201).location(`/api/incidents/${incident.id}`).json(incident);
+});
+</code></pre>
+<ul>
+<li><code>readTitle</code> trims, checks 3–120 characters, else <code>throw bad(&quot;title must be 3-120 characters&quot;)</code></li>
+<li><code>bad(...)</code> is an <code>HttpError(400, &quot;validation_failed&quot;, …)</code> — the error handler turns it into JSON</li>
+</ul>
+<h3 id="every-error-leaves-in-one-json-shape-the-frontend-already-reads">Every error leaves in one JSON shape the frontend already reads</h3>
+<pre><code class="language-js">app.use((err, req, res, next) =&gt; {
+  if (res.headersSent) return next(err);
+  const status = err instanceof HttpError ? err.status : err.status ?? 500;
+  const code = err instanceof HttpError ? err.code
+    : err.type === &quot;entity.parse.failed&quot; ? &quot;invalid_json&quot;
+    : err.type === &quot;entity.too.large&quot; ? &quot;too_large&quot;
+    : &quot;internal_error&quot;;
+  const message = status &gt;= 500 ? &quot;unexpected server error&quot; : err.message;
+  if (status &gt;= 500) log(`ERROR ${err.stack ?? err}`);
+  res.status(status).json({ error: { code, message } });
+});
+</code></pre>
+<ul>
+<li><code>{ error: { code, message } }</code> is exactly the <code>ErrorBody</code> type <code>toApiError</code> reads</li>
+<li>5xx: log the stack, send a <strong>generic</strong> message — never leak internals</li>
+</ul>
+<h3 id="cors-who-may-read-the-answer">CORS: who may read the answer</h3>
+<h3 id="origin--scheme--host--port-change-one-and-it-is-cross-origin">Origin = scheme + host + port; change one and it is cross-origin</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>Page origin</th><th>Request to</th><th>Same origin?</th></tr></thead><tbody><tr><td><code>http://localhost:5173</code></td><td><code>http://localhost:5173/api</code></td><td><strong>Yes</strong> — nothing differs</td></tr><tr><td><code>http://localhost:5173</code></td><td><code>http://localhost:3001/api</code></td><td><strong>No</strong> — port differs</td></tr><tr><td><code>http://localhost:5173</code></td><td><code>http://127.0.0.1:5173/api</code></td><td><strong>No</strong> — host differs</td></tr><tr><td><code>https://app.example.edu</code></td><td><code>http://app.example.edu/api</code></td><td><strong>No</strong> — scheme differs</td></tr><tr><td><code>https://app.example.edu</code></td><td><code>https://api.example.edu</code></td><td><strong>No</strong> — host differs</td></tr></tbody></table></div>
+<h3 id="the-preflight-the-browser-asks-first-then-sends-the-real-request">The preflight: the browser asks first, then sends the real request</h3>
+<p><img src="../../assets/class-notes/week04-session-s48-1.svg" alt="Sequence diagram. On the left the browser at origin localhost 5173, on the right the API at localhost 3001. Step 1, the browser sends OPTIONS with Origin, Access-Control-Request-Method PATCH and Access-Control-Request-Headers content-type and x-request-id. Step 2, the API answers 204 with Access-Control-Allow-Origin, Allow-Methods, Allow-Headers and Max-Age 600. Step 3, the browser sends the real PATCH with a JSON body. Step 4, the API answers 200 with JSON and Access-Control-Allow-Origin, and JavaScript may read the response."></p>
+<p><em>A preflight is the browser asking permission before a non-simple request; the real request is only sent if the answer allows it</em></p>
+<h3 id="the-policy-an-exact-allowlist-and-the-headers-it-permits">The policy: an exact allowlist, and the headers it permits</h3>
+<pre><code class="language-js">export function corsOptions(allowedOrigins = DEFAULT_ORIGINS) {
+  const allowed = new Set(allowedOrigins);
+  return {
+    origin(origin, done) {
+      if (!origin) return done(null, true);
+      done(null, allowed.has(origin)); // false = no CORS headers at all
+    },
+    methods: [&quot;GET&quot;, &quot;POST&quot;, &quot;PUT&quot;, &quot;PATCH&quot;, &quot;DELETE&quot;],
+    allowedHeaders: [&quot;Content-Type&quot;, &quot;X-Request-Id&quot;],
+    exposedHeaders: [&quot;Location&quot;, &quot;X-Request-Id&quot;], // readable by axios
+    maxAge: 600, // the browser may cache a preflight answer for 10 minutes
+  };
+}
+</code></pre>
+<ul>
+<li><code>exposedHeaders</code> is why Block B&#39;s <code>createIncident</code> can read <code>Location</code></li>
+</ul>
+<h3 id="allowed-and-refused-preflights-side-by-side">Allowed and refused preflights, side by side</h3>
+<pre><code class="language-console">$ curl -i -X OPTIONS localhost:3001/api/incidents/abc \
+    -H &#39;Origin: http://localhost:5173&#39; \
+    -H &#39;Access-Control-Request-Method: PATCH&#39;
+HTTP/1.1 204 No Content
+Access-Control-Allow-Origin: http://localhost:5173
+Vary: Origin
+Access-Control-Allow-Methods: GET,POST,PUT,PATCH,DELETE
+Access-Control-Allow-Headers: Content-Type,X-Request-Id
+Access-Control-Max-Age: 600
+
+$ curl -i -X OPTIONS localhost:3001/api/incidents/abc \
+    -H &#39;Origin: http://localhost:5174&#39; \
+    -H &#39;Access-Control-Request-Method: PATCH&#39;
+HTTP/1.1 204 No Content
+</code></pre>
+<ul>
+<li>Refused is not an error status: it is a 204 <strong>with no <code>Access-Control-*</code> headers</strong></li>
+<li><code>Vary: Origin</code> tells caches the answer depends on who asked</li>
+</ul>
+<h3 id="same-request-curl-gets-the-data-the-browser-refuses-to-hand-it-over">Same request: curl gets the data, the browser refuses to hand it over</h3>
+<pre><code class="language-console">$ curl -i localhost:3001/api/incidents -H &#39;Origin: http://localhost:5174&#39;
+HTTP/1.1 200 OK            ← no Access-Control-Allow-Origin header
+Content-Type: application/json; charset=utf-8
+{&quot;items&quot;:[{&quot;id&quot;:&quot;…&quot;,&quot;title&quot;:&quot;Synthetic printing delay&quot;,…}],&quot;count&quot;:3}
+
+Edge console on :5174 — Access to XMLHttpRequest at &#39;http://localhost:3001/
+api/healthz&#39; from origin &#39;http://localhost:5174&#39; has been blocked by CORS
+policy: Response to preflight request doesn&#39;t pass access control check: No
+&#39;Access-Control-Allow-Origin&#39; header is present on the requested resource.
+</code></pre>
+<blockquote>
+<p><strong>Failure to avoid</strong></p>
+<p>CORS is enforced by the <strong>browser</strong>. It is not authentication: curl, scripts and other
+servers ignore it entirely.</p>
+</blockquote>
+<h3 id="cors-mistakes-that-ship-to-production">CORS mistakes that ship to production</h3>
+<ul>
+<li><strong><code>origin: &quot;*&quot;</code> with cookies</strong> — browsers reject it; reflecting any origin instead is a real vulnerability</li>
+<li><strong>Fixing CORS in the frontend</strong> — headers only work when the <em>server</em> sends them; a browser extension &quot;fix&quot; hides the bug</li>
+<li><strong>Forgetting the deployed origin</strong> — <code>CORS_ORIGINS=https://app.example.edu</code>, set per environment</li>
+<li><strong>Treating CORS as security for the API</strong> — it is not; authenticate every request</li>
+<li><strong>Alternative in dev:</strong> a Vite proxy makes the calls same-origin, so no CORS at all</li>
+</ul>
+<h3 id="demo-break-cors-read-the-error-fix-it-with-configuration">Demo: break CORS, read the error, fix it with configuration</h3>
+<h4 id="steps-2">Steps</h4>
+<ol>
+<li>Open <code>localhost:5174</code> (<code>npm run dev:wrong-origin</code>)</li>
+<li>Red banner; console shows the CORS message</li>
+<li>Restart API with <code>CORS_ORIGINS</code> including <code>:5174</code></li>
+<li>Reload <code>:5174</code> — it works, no code changed</li>
+</ol>
+<h4 id="expected-observations-2">Expected observations</h4>
+<ul>
+<li>Preflight gains <code>Allow-Origin: http://localhost:5174</code></li>
+</ul>
+<h4 id="fallback-2">Fallback</h4>
+<p>The real captures on slides 12–13.</p>
+<p><strong>Sources</strong></p>
+<ul>
+<li>Course — <a href="samples/campuspulse-fullstack/index.html">campuspulse-fullstack sample</a></li>
+</ul>
+<h3 id="which-layer-is-wrong-and-what-is-the-smallest-fix">Which layer is wrong, and what is the smallest fix?</h3>
+<ol>
+<li>The deployed app at <code>https://app.example.edu</code> shows a &quot;network error&quot;; curl to the API returns 200.</li>
+<li>Creating an incident works, but <code>createIncident</code> returns <code>location: undefined</code>.</li>
+<li>Every failed POST shows &quot;network error&quot; instead of the server&#39;s validation message.</li>
+</ol>
+<h2 id="individual-practice">Individual practice</h2>
+<h3 id="individual-lab-https-to-deployment">Individual lab: HTTPS to deployment</h3>
+<p><strong>Predict before each command, then compare with the result.</strong></p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>Part</th><th>Focus</th><th style="text-align:right">Min</th></tr></thead><tbody><tr><td>1</td><td>Negotiated HTTP version</td><td style="text-align:right">5</td></tr><tr><td>2</td><td>Reconstruct a certificate chain</td><td style="text-align:right">7</td></tr><tr><td>3</td><td>Diagnose three failure reports</td><td style="text-align:right">8</td></tr><tr><td>4</td><td>Your domain&#39;s CT record</td><td style="text-align:right">4</td></tr><tr><td>5</td><td>Deploy, fail a gate, roll back</td><td style="text-align:right">11</td></tr></tbody></table></div>
+<p><strong>Sources</strong></p>
+<ul>
+<li>Course — <a href="lab.html">Week 4 guided lab: full commands, expected output, and offline fallbacks</a></li>
+</ul>
+<h2 id="homework-brief">Homework brief</h2>
+<h3 id="the-budget-alert-is-this-weeks-gate-and-it-comes-first">The budget alert is this week&#39;s gate, and it comes first</h3>
+<ul>
+<li>Configure a cloud budget alert <strong>before</strong> you provision anything that bills</li>
+<li>Set the threshold at a number that would genuinely alarm you — for most of you, low</li>
+<li>Alert at <strong>50%, 80% and 100%</strong>, to an address you actually read</li>
+<li><strong>Screenshot the configured alert.</strong> That screenshot is a graded HW4 artifact</li>
+<li>No budget alert means no cloud-hosted work — this gate is not negotiable</li>
+</ul>
+<blockquote>
+<p><strong>Key idea</strong></p>
+<p>Five minutes, zero dollars, and it is the difference between finding out in a day and
+finding out on the invoice.</p>
+</blockquote>
+<h3 id="hw4--connect-it-frontend-api-https">HW4 — Connect It: frontend, API, HTTPS</h3>
+<p><strong>100 points · individual · due before Week 5 · Gate 2.</strong></p>
+<h4 id="connect-it">Connect it</h4>
+<ul>
+<li>API status codes, one error shape</li>
+<li>Exact CORS allowlist</li>
+<li>One axios client, one <code>ApiError</code></li>
+</ul>
+<h4 id="ship-and-trust-it">Ship and trust it</h4>
+<ul>
+<li>Live over HTTPS, read-only</li>
+<li>Digest deploy + rollback</li>
+<li>Your chain + a fired alert</li>
+</ul>
+<p><strong>Sources</strong></p>
+<ul>
+<li>Course — <a href="homework.html">HW4 handout</a> · <a href="../../docs/evidence-standard.html">evidence standard</a></li>
+</ul>
+<h2 id="closing-logistics">Closing logistics</h2>
+<h3 id="before-you-leave">Before you leave</h3>
+<h4 id="exit-ticket--one-line">Exit ticket — one line</h4>
+<ul>
+<li>Name one command that would settle: <em>&quot;our API is slow on mobile because HTTP/3 is
+disabled.&quot;</em></li>
+</ul>
+<h4 id="before-week-5">Before Week 5</h4>
+<ul>
+<li><strong>HW4 is due before Week 5</strong> — start with the budget alert tonight, not the certificate</li>
+<li>Complete the <a href="../week05/prep.html">Week 5 prep</a> before class: delivery, caching, and
+what the user actually experiences</li>
+</ul>
+
+</main>
+<footer>Individual coursework. D2L contains dated deadlines, submissions and private course access.</footer>
+</body>
+</html>

@@ -1,0 +1,39 @@
+# Captured 2026-08-15 on Windows 11, OpenSSL 3.5.7.
+# Real output. Long PEM blocks are marked [elided].
+
+
+$ openssl s_client -connect www.depaul.edu:443 -servername www.depaul.edu \
+    -showcerts -alpn h2,http/1.1 </dev/null
+
+
+depth=3 C=US, O=Internet Security Research Group, CN=ISRG Root X1
+verify return:1
+depth=2 C=US, O=ISRG, CN=Root YR
+verify return:1
+depth=1 C=US, O=Let's Encrypt, CN=YR2
+verify return:1
+depth=0 CN=www.depaul.edu
+verify return:1
+Certificate chain
+ 0 s:CN=www.depaul.edu
+   i:C=US, O=Let's Encrypt, CN=YR2
+   a:PKEY: RSA, 2048 (bit); sigalg: sha256WithRSAEncryption
+   v:NotBefore: Jul 22 18:05:32 2026 GMT; NotAfter: Oct 20 18:05:31 2026 GMT
+ 1 s:C=US, O=Let's Encrypt, CN=YR2
+   i:C=US, O=ISRG, CN=Root YR
+   a:PKEY: RSA, 2048 (bit); sigalg: sha256WithRSAEncryption
+   v:NotBefore: Sep  3 00:00:00 2025 GMT; NotAfter: Sep  2 23:59:59 2028 GMT
+ 2 s:C=US, O=ISRG, CN=Root YR
+   i:C=US, O=Internet Security Research Group, CN=ISRG Root X1
+   a:PKEY: RSA, 4096 (bit); sigalg: sha256WithRSAEncryption
+   v:NotBefore: May 13 00:00:00 2026 GMT; NotAfter: Sep  2 23:59:59 2032 GMT
+subject=CN=www.depaul.edu
+issuer=C=US, O=Let's Encrypt, CN=YR2
+Verification: OK
+Protocol: TLSv1.3
+ALPN protocol: h2
+Verify return code: 0 (ok)
+    Verify return code: 0 (ok)
+
+
+[PEM blocks between the chain entries elided - run the command yourself to see them.]

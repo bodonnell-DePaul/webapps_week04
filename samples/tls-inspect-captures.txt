@@ -1,0 +1,125 @@
+# Captured 2026-10-01 with PowerShell 7.6.6 (.NET) running tls-inspect.ps1.
+# Real output. .NET prints the same fields on Windows; differences are listed at the end.
+
+PS> .\tls-inspect.ps1 www.depaul.edu
+== Connection ==
+
+[32;1mHost     : [0mwww.depaul.edu:443
+[32;1mProtocol : [0mTls12
+[32;1mCipher   : [0mTLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+
+== Leaf certificate ==
+
+[32;1mSubject    : [0mCN=www.depaul.edu
+[32;1mIssuer     : [0mCN=YR1, O=Let's Encrypt, C=US
+[32;1mNotBefore  : [0m2026-09-22 17:53
+[32;1mNotAfter   : [0m2026-12-21 16:52
+[32;1mDaysLeft   : [0m81
+[32;1mSAN        : [0mDNS:www.depaul.edu
+[32;1mThumbprint : [0mECD4BF7AE268F126C5F5E667E44396890BFC2610
+
+== Chain built by this device (0 = leaf) ==
+
+[32;1mDepth[0m[32;1m Subject                                                  [0m[32;1m NotAfter[0m
+[32;1m-----[0m [32;1m-------                                                  [0m [32;1m--------[0m
+    0 CN=www.depaul.edu                                         2026-12-21
+    1 CN=YR1, O=Let's Encrypt, C=US                             2028-09-02
+    2 CN=Root YR, O=ISRG, C=US                                  2032-09-02
+    3 CN=ISRG Root X1, O=Internet Security Research Group, C=US 2035-06-04
+
+== Verdict ==
+
+[32;1mPolicyErrors : [0mNone
+[32;1mChainStatus  : [0mOK
+
+
+PS> .\tls-inspect.ps1 expired.badssl.com
+== Connection ==
+
+[32;1mHost     : [0mexpired.badssl.com:443
+[32;1mProtocol : [0mTls12
+[32;1mCipher   : [0mTLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+
+== Leaf certificate ==
+
+[32;1mSubject    : [0mCN=*.badssl.com, OU=PositiveSSL Wildcard, OU=Domain Control
+             Validated
+[32;1mIssuer     : [0mCN=COMODO RSA Domain Validation Secure Server CA, O=COMODO CA
+             Limited, L=Salford, S=Greater Manchester, C=GB
+[32;1mNotBefore  : [0m2015-04-08 19:00
+[32;1mNotAfter   : [0m2015-04-12 18:59
+[32;1mDaysLeft   : [0m-4190
+[32;1mSAN        : [0mDNS:*.badssl.com, DNS:badssl.com
+[32;1mThumbprint : [0m404BBD2F1F4CC2FDEEF13AABDD523EF61F1C71F3
+
+== Chain built by this device (0 = leaf) ==
+
+[32;1mDepth[0m[32;1m Subject[0m
+[32;1m-----[0m [32;1m-------                                                                  [0m
+    0 CN=*.badssl.com, OU=PositiveSSL Wildcard, OU=Domain Control Validated
+    1 CN=COMODO RSA Domain Validation Secure Server CA, O=COMODO CA Limited, L…
+    2 CN=COMODO RSA Certification Authority, O=COMODO CA Limited, L=Salford, S…
+
+== Verdict ==
+
+[32;1mPolicyErrors : [0mRemoteCertificateChainErrors
+[32;1mChainStatus  : [0mNotTimeValid
+
+
+PS> .\tls-inspect.ps1 wrong.host.badssl.com
+== Connection ==
+
+[32;1mHost     : [0mwrong.host.badssl.com:443
+[32;1mProtocol : [0mTls12
+[32;1mCipher   : [0mTLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+
+== Leaf certificate ==
+
+[32;1mSubject    : [0mCN=*.badssl.com
+[32;1mIssuer     : [0mCN=YR1, O=Let's Encrypt, C=US
+[32;1mNotBefore  : [0m2026-09-29 15:02
+[32;1mNotAfter   : [0m2026-12-28 14:02
+[32;1mDaysLeft   : [0m87
+[32;1mSAN        : [0mDNS:*.badssl.com, DNS:badssl.com
+[32;1mThumbprint : [0mF95E561C27728A1FF8461E7F6C89CB0225674E83
+
+== Chain built by this device (0 = leaf) ==
+
+[32;1mDepth[0m[32;1m Subject                                                  [0m[32;1m NotAfter[0m
+[32;1m-----[0m [32;1m-------                                                  [0m [32;1m--------[0m
+    0 CN=*.badssl.com                                           2026-12-28
+    1 CN=YR1, O=Let's Encrypt, C=US                             2028-09-02
+    2 CN=Root YR, O=ISRG, C=US                                  2032-09-02
+    3 CN=ISRG Root X1, O=Internet Security Research Group, C=US 2035-06-04
+
+== Verdict ==
+
+[32;1mPolicyErrors : [0mRemoteCertificateNameMismatch
+[32;1mChainStatus  : [0mOK
+
+
+PS> foreach ($u in <four badssl URLs>) { try { Invoke-WebRequest $u } catch { <innermost message> } }
+https://expired.badssl.com/ -> The remote certificate is invalid because of errors in the certificate chain: NotTimeValid
+https://wrong.host.badssl.com/ -> The remote certificate is invalid according to the validation procedure: RemoteCertificateNameMismatch
+https://self-signed.badssl.com/ -> The remote certificate is invalid because of errors in the certificate chain: UntrustedRoot
+https://untrusted-root.badssl.com/ -> The remote certificate is invalid because of errors in the certificate chain: UntrustedRoot
+
+PS> Invoke-WebRequest https://incomplete-chain.badssl.com/ | Select-Object StatusCode
+200      <- the trap: the server sends only the leaf, but the OS fetched the intermediate (AIA)
+
+PS> .\tls-inspect.ps1 incomplete-chain.badssl.com      (abridged: Verdict only)
+== Verdict ==
+
+PolicyErrors : None
+ChainStatus  : OK
+
+# Differences to expect on the Windows 11 lecture machine (not captured here):
+# - Protocol: PowerShell 7 on Windows 11 usually shows Tls13 (Schannel). Windows
+#   PowerShell 5.1 (.NET Framework) usually shows Tls12. Check $PSVersionTable first.
+# - SAN is formatted by Windows as "DNS Name=www.depaul.edu".
+# - Windows PowerShell 5.1 wraps failures as "Could not establish trust
+#   relationship for the SSL/TLS secure channel"; PowerShell 7 shows the
+#   messages above.
+# - incomplete-chain.badssl.com usually PASSES on Windows and macOS because the
+#   OS downloads the missing intermediate (AIA fetching). Firefox and OpenSSL
+#   fail it. Test chains with a strict client, not just your own browser.

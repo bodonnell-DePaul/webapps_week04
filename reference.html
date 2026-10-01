@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week 4 public reference — deployment and trust evidence - CSC 436</title>
+<link rel="stylesheet" href="../../assets/course.css">
+<link rel="icon" type="image/svg+xml" href="../../assets/course-icon.svg">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header><a class="course-name" href="../../index.html">CSC 436</a>
+<nav aria-label="Course">
+<a href="../../docs/getting-started.html">Start here</a>
+<a href="../../docs/new_syllabus.html">Syllabus</a>
+<a href="../../docs/course-map.html">Course map</a>
+<a href="../../final-project/index.html">Final project</a>
+</nav></header>
+<main id="main">
+<p class="source-link"><a href="reference.md" download>Download Markdown source</a></p>
+<h1 id="week-4-public-reference--deployment-and-trust-evidence">Week 4 public reference — deployment and trust evidence</h1>
+<p>The <a href="../../docs/deployment-runbook.html">deployment runbook</a> is the complete public
+walkthrough from local app to course-host staging, custom DNS, reverse proxy,
+ACME, renewal, rollback and teardown. Use it during HW4; it is not extra prep.
+Private speaker notes are not needed to execute that path.</p>
+<h2 id="http-versions-and-a-tls-handshake">HTTP versions and a TLS handshake</h2>
+<p>HTTP methods, status codes and resource semantics remain recognizable across
+versions. HTTP/1.1 commonly uses multiple TCP connections for concurrency.
+HTTP/2 multiplexes streams over one TCP connection, but TCP must deliver bytes
+in order: losing bytes can delay otherwise independent HTTP streams.
+HTTP/3 uses QUIC over UDP. QUIC provides reliability, encryption and separate
+stream delivery, reducing cross-stream transport head-of-line blocking from
+loss. Shared congestion control and dependencies can still affect several
+streams; HTTP/3 is not a guarantee that every site becomes faster.</p>
+<p>A typical new TLS 1.3 connection starts with a ClientHello offering versions,
+algorithms and key-share material, then a ServerHello selecting parameters.
+Subsequent handshake messages—including the server certificate—are encrypted.
+The client validates the chain, hostname and validity and verifies the
+handshake before trusting application data. The private key is not sent.
+Without ECH, ClientHello metadata such as SNI is normally visible; encryption
+of page content does not imply that every connection detail is hidden.</p>
+<p>Ordinary TLS 1.3 establishment generally needs one handshake round trip after
+TCP setup; older TLS 1.2 handshakes commonly need two. Resumption changes this
+sequence. Optional 0-RTT early data has replay risk and is not suitable for
+arbitrary state-changing requests. These counts describe a protocol pattern,
+not a promise about a browser waterfall with DNS, network loss and application work.</p>
+<p>ALPN helps select an application protocol during connection establishment.
+The client must report the negotiated result. <code>Alt-Svc</code> advertises another
+service endpoint/protocol; it does not prove the client reached it.</p>
+<p>In ordinary server-authenticated HTTPS, the server presents a certificate and
+the client validates it. <strong>Mutual TLS (mTLS)</strong> also authenticates the client
+using a client certificate. Application permissions still require an
+authorization policy; possessing a certificate does not automatically authorize
+every action. mTLS is recognition-level material, not a required setup exercise.</p>
+<h2 id="separate-the-questions">Separate the questions</h2>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>Question</th><th>Evidence</th></tr></thead><tbody><tr><td>Does DNS identify the intended target?</td><td>Authority plus resolver observations</td></tr><tr><td>Does this connection negotiate the expected HTTP version?</td><td>Client&#39;s reported version / browser Protocol column</td></tr><tr><td>Does the endpoint advertise h3?</td><td>Alt-Svc or applicable HTTPS DNS record — advertisement only</td></tr><tr><td>Does a normal client trust this HTTPS endpoint?</td><td>Chain, SAN hostname, validity and trust-anchor verification</td></tr><tr><td>Did the new release answer?</td><td>Health status <strong>and exact release identity</strong>, correlated with inspected deployment image</td></tr><tr><td>Will certificate renewal keep working?</td><td>Config/timer/provider ownership, logs and an external expiry alert that has fired</td></tr></tbody></table></div>
+<p><code>--http2</code> can fall back. <code>--http3</code> can fall back. Missing curl features are a
+build limitation, not proof of missing server capability. Use the documented
+browser/course-shell/fixture fallback and label untested negotiation honestly.</p>
+<h2 id="tls-operation">TLS operation</h2>
+<p>SNI selects a virtual host; hostname verification checks its certificate&#39;s SAN.
+Modern OpenSSL can infer SNI from a DNS-name <code>-connect</code>; use <code>-servername</code>
+explicitly for an intended name and <code>-noservername</code> to deliberately omit it.
+<code>s_client</code> does not verify hostname by default; use <code>-verify_hostname</code> and
+<code>-verify_return_error</code> for a validating probe.</p>
+<p>Servers normally send leaf plus intermediates. Sending a root would not make it
+trusted: the client needs a trusted anchor already. Browser/OS/enterprise trust
+policy can differ. Do not globally trust an unknown root or disable verification
+as an outage repair.</p>
+<p>If the server omits an intermediate, a client that cached it or can fetch it
+through the certificate&#39;s AIA information may still connect, while another
+client fails. The operational repair is to serve the needed intermediate chain,
+not to tell every visitor to weaken certificate checking.</p>
+<p>ACME verifies domain control, not application quality. CA staging certificates
+are deliberately untrusted; the application staging site ultimately needs
+ordinary trusted HTTPS. Inspect actual lifetime and issuer policy; ninety days
+and a twenty-one-day warning threshold are fixture examples, not universal rules.</p>
+<h2 id="x-forwarded-proto-behind-tls-termination">X-Forwarded-Proto behind TLS termination</h2>
+<p>When a reverse proxy terminates public HTTPS and forwards to an HTTP origin,
+the origin&#39;s direct connection is plaintext even though the browser used HTTPS.
+<code>X-Forwarded-Proto: https</code> is one common way the proxy communicates the original
+scheme. The app may need that information for secure redirects and absolute URLs.
+Without a correctly configured trusted-proxy path, an app can keep redirecting
+an already-HTTPS visitor back to HTTPS.</p>
+<p>The header is <strong>not proof by itself</strong>: clients can send headers too. Accept it
+only through the configured trusted immediate proxy, ensure that proxy
+overwrites untrusted incoming values, and prevent an untrusted direct-origin
+route. Inspect the public response chain, proxy configuration and the origin&#39;s
+observed scheme together. Do not trust every sender or every forwarded-header
+entry merely to make a redirect loop disappear.</p>
+<h2 id="if-a-small-request-works-but-a-larger-one-hangs">If a small request works but a larger one hangs</h2>
+<p>A handshake does not rule out every path problem. PMTUD relies on appropriate
+ICMP feedback when a path&#39;s MTU is smaller than expected; filtering IPv4
+&quot;fragmentation needed&quot; or IPv6 &quot;Packet Too Big&quot; can stall larger transfers.
+Compare bounded small/large requests only on authorized staging and inspect
+retransmissions/ICMP with the network owner. Do not change global MTUs or disable
+firewalls to force success. IPv6 also relies on ICMPv6 Neighbor Discovery.</p>
+<h2 id="cost-access-and-release-boundaries">Cost, access and release boundaries</h2>
+<p>Use the course-provisioned host if personal cloud/card access is unavailable.
+Budget alerts notify; they are not caps. Record quotas and teardown ownership.
+Before Week 8, public applications must be read-only or access-controlled;
+an unlinked hostname and HTTPS are not authorization.</p>
+<p>The local deployment simulator exercises real loopback HTTP checks, not cloud
+builds or certificate issuance. Reuse its reasoning, not its simulated output
+as public deployment evidence.</p>
+<p>Use the <a href="../../docs/non-ai-review-artifacts.html#hw4---cors-and-release-draft">HW4 supplied CORS and release draft</a>
+for the no-personal-AI route, following the equivalent critique instructions in HW4.</p>
+
+</main>
+<footer>Individual coursework. D2L contains dated deadlines, submissions and private course access.</footer>
+</body>
+</html>

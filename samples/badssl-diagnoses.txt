@@ -1,0 +1,109 @@
+# Captured 2026-08-15. Real output from live badssl.com endpoints.
+# curl 8.5.0 (OpenSSL) via WSL; openssl 3.5.7 on Windows.
+
+
+=============== expired.badssl.com ===============
+
+$ curl -sS -o /dev/null -w 'code=%{http_code}\n' https://expired.badssl.com/
+curl: (60) SSL certificate problem: certificate has expired
+code=000
+
+$ openssl s_client -connect expired.badssl.com:443 -servername expired.badssl.com -showcerts </dev/null
+
+depth=2 C=GB, ST=Greater Manchester, L=Salford, O=COMODO CA Limited, CN=COMODO RSA Certification Authority
+depth=1 C=GB, ST=Greater Manchester, L=Salford, O=COMODO CA Limited, CN=COMODO RSA Domain Validation Secure Server CA
+depth=0 OU=Domain Control Validated, OU=PositiveSSL Wildcard, CN=*.badssl.com
+verify error:num=10:certificate has expired
+depth=0 OU=Domain Control Validated, OU=PositiveSSL Wildcard, CN=*.badssl.com
+Certificate chain
+ 0 s:OU=Domain Control Validated, OU=PositiveSSL Wildcard, CN=*.badssl.com
+   i:C=GB, ST=Greater Manchester, L=Salford, O=COMODO CA Limited, CN=COMODO RSA Domain Validation Secure Server CA
+   v:NotBefore: Apr  9 00:00:00 2015 GMT; NotAfter: Apr 12 23:59:59 2015 GMT
+ 1 s:C=GB, ST=Greater Manchester, L=Salford, O=COMODO CA Limited, CN=COMODO RSA Domain Validation Secure Server CA
+   i:C=GB, ST=Greater Manchester, L=Salford, O=COMODO CA Limited, CN=COMODO RSA Certification Authority
+   v:NotBefore: Feb 12 00:00:00 2014 GMT; NotAfter: Feb 11 23:59:59 2029 GMT
+
+
+=============== wrong.host.badssl.com ===============
+
+$ curl -sS -o /dev/null -w 'code=%{http_code}\n' https://wrong.host.badssl.com/
+curl: (60) SSL: no alternative certificate subject name matches target host name 'wrong.host.badssl.com'
+More details here: https://curl.se/docs/sslcerts.html
+
+$ openssl s_client -connect wrong.host.badssl.com:443 -servername wrong.host.badssl.com -showcerts </dev/null
+
+depth=3 C=US, O=Internet Security Research Group, CN=ISRG Root X1
+depth=2 C=US, O=ISRG, CN=Root YR
+depth=1 C=US, O=Let's Encrypt, CN=YR2
+depth=0 CN=*.badssl.com
+Certificate chain
+ 0 s:CN=*.badssl.com
+   i:C=US, O=Let's Encrypt, CN=YR2
+   v:NotBefore: Jul 28 20:03:02 2026 GMT; NotAfter: Oct 26 20:03:01 2026 GMT
+ 1 s:C=US, O=Let's Encrypt, CN=YR2
+   i:C=US, O=ISRG, CN=Root YR
+   v:NotBefore: Sep  3 00:00:00 2025 GMT; NotAfter: Sep  2 23:59:59 2028 GMT
+ 2 s:C=US, O=ISRG, CN=Root YR
+
+
+=============== incomplete-chain.badssl.com ===============
+
+$ curl -sS -o /dev/null -w 'code=%{http_code}\n' https://incomplete-chain.badssl.com/
+curl: (60) SSL certificate problem: unable to get local issuer certificate
+More details here: https://curl.se/docs/sslcerts.html
+
+$ openssl s_client -connect incomplete-chain.badssl.com:443 -servername incomplete-chain.badssl.com -showcerts </dev/null
+
+depth=0 CN=*.badssl.com
+verify error:num=20:unable to get local issuer certificate
+depth=0 CN=*.badssl.com
+verify error:num=21:unable to verify the first certificate
+depth=0 CN=*.badssl.com
+Certificate chain
+ 0 s:CN=*.badssl.com
+   i:C=US, O=Let's Encrypt, CN=YR2
+   v:NotBefore: Jul 28 20:03:02 2026 GMT; NotAfter: Oct 26 20:03:01 2026 GMT
+Verification error: unable to verify the first certificate
+    Verify return code: 21 (unable to verify the first certificate)
+
+
+=============== untrusted-root.badssl.com ===============
+
+$ curl -sS -o /dev/null -w 'code=%{http_code}\n' https://untrusted-root.badssl.com/
+curl: (60) SSL certificate problem: self-signed certificate in certificate chain
+More details here: https://curl.se/docs/sslcerts.html
+
+$ openssl s_client -connect untrusted-root.badssl.com:443 -servername untrusted-root.badssl.com -showcerts </dev/null
+
+depth=1 C=US, ST=California, L=San Francisco, O=BadSSL, CN=BadSSL Untrusted Root Certificate Authority
+verify error:num=19:self-signed certificate in certificate chain
+depth=1 C=US, ST=California, L=San Francisco, O=BadSSL, CN=BadSSL Untrusted Root Certificate Authority
+depth=0 C=US, ST=California, L=San Francisco, O=BadSSL, CN=*.badssl.com
+Certificate chain
+ 0 s:C=US, ST=California, L=San Francisco, O=BadSSL, CN=*.badssl.com
+   i:C=US, ST=California, L=San Francisco, O=BadSSL, CN=BadSSL Untrusted Root Certificate Authority
+   v:NotBefore: Aug 11 21:00:26 2026 GMT; NotAfter: Aug 10 21:00:26 2028 GMT
+ 1 s:C=US, ST=California, L=San Francisco, O=BadSSL, CN=BadSSL Untrusted Root Certificate Authority
+   i:C=US, ST=California, L=San Francisco, O=BadSSL, CN=BadSSL Untrusted Root Certificate Authority
+   v:NotBefore: Jul  7 06:31:35 2016 GMT; NotAfter: Jul  2 06:31:35 2036 GMT
+Verification error: self-signed certificate in certificate chain
+
+
+=============== self-signed.badssl.com ===============
+
+$ curl -sS -o /dev/null -w 'code=%{http_code}\n' https://self-signed.badssl.com/
+curl: (60) SSL certificate problem: self-signed certificate
+More details here: https://curl.se/docs/sslcerts.html
+
+$ openssl s_client -connect self-signed.badssl.com:443 -servername self-signed.badssl.com -showcerts </dev/null
+
+depth=0 C=US, ST=California, L=San Francisco, O=BadSSL, CN=*.badssl.com
+verify error:num=18:self-signed certificate
+depth=0 C=US, ST=California, L=San Francisco, O=BadSSL, CN=*.badssl.com
+Certificate chain
+ 0 s:C=US, ST=California, L=San Francisco, O=BadSSL, CN=*.badssl.com
+   i:C=US, ST=California, L=San Francisco, O=BadSSL, CN=*.badssl.com
+   v:NotBefore: Aug 11 21:00:26 2026 GMT; NotAfter: Aug 10 21:00:26 2028 GMT
+Verification error: self-signed certificate
+    Verify return code: 18 (self-signed certificate)
+

@@ -1,0 +1,22 @@
+# Captured 2026-08-15 on Windows 11 + WSL (Ubuntu), curl 8.5.0, OpenSSL 3.5.7.
+# Real output. Nothing here was hand-edited except where marked [elided].
+
+
+$ curl -sS -o /dev/null --http1.1 -w 'version=%{http_version} code=%{http_code}\n' https://www.cloudflare.com/
+version=1.1 code=200
+
+$ curl -sS -o /dev/null --http2 -w 'version=%{http_version} code=%{http_code}\n' https://www.cloudflare.com/
+version=2 code=200
+
+$ curl -sSI https://www.cloudflare.com/   # looking for alt-svc
+
+HTTP/2 103 
+HTTP/2 200 
+server: cloudflare
+alt-svc: h3=":443"; ma=86400
+
+
+$ curl -sS --http2 -o /dev/null -o /dev/null -o /dev/null -w 'conn=%{num_connects} ver=%{http_version} time=%{time_total}\n' <same URL x3>
+conn=1 ver=2 time=1.017584
+conn=0 ver=2 time=0.152980
+conn=0 ver=2 time=0.071016

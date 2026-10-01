@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week 4 — Guided lab - CSC 436</title>
+<link rel="stylesheet" href="../../assets/course.css">
+<link rel="icon" type="image/svg+xml" href="../../assets/course-icon.svg">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header><a class="course-name" href="../../index.html">CSC 436</a>
+<nav aria-label="Course">
+<a href="../../docs/getting-started.html">Start here</a>
+<a href="../../docs/new_syllabus.html">Syllabus</a>
+<a href="../../docs/course-map.html">Course map</a>
+<a href="../../final-project/index.html">Final project</a>
+</nav></header>
+<main id="main">
+<p class="source-link"><a href="lab.md" download>Download Markdown source</a></p>
+<h1 id="week-4--guided-lab">Week 4 — Guided lab</h1>
+<p><strong>Protocol negotiation, chain reconstruction, failure diagnosis, CT lookup, and a
+rollback you actually run.</strong>
+35 minutes, in five parts. Individual work throughout — write your own prediction and
+run every command yourself. Last verified: 2026-08-15.</p>
+<blockquote>
+<p><strong>Everything in this lab was run for real on 2026-08-15.</strong> Parts 1–4 hit live systems;
+part 5 is a real HTTP client-server exchange on your own machine. Every &quot;expected
+output&quot; block below is a genuine capture, not an illustration — though live data such
+as the CT rows will have moved on by the time you run it. If your output differs, that
+is information: read <a href="#troubleshooting">§ Troubleshooting</a> before assuming you did it
+wrong.</p>
+</blockquote>
+<hr>
+<h2 id="0-toolchain-check--do-this-before-class-5-min">0. Toolchain check — do this <strong>before</strong> class <em>(5 min)</em></h2>
+<p>You need <code>curl</code> <strong>with HTTP/2 support</strong> and <code>openssl</code>. Check:</p>
+<pre><code class="language-bash">curl --version      # read the &quot;Features:&quot; line
+openssl version
+</code></pre>
+<p>You are looking for <code>HTTP2</code> in the <code>Features:</code> list.</p>
+<h3 id="check-features-not-just-the-operating-system">Check features, not just the operating system</h3>
+<p>Some Windows curl builds lack HTTP/2 and HTTP/3; Schannel itself does not determine
+that. The following is the <strong>dated captured build</strong>, not a claim about every installation:</p>
+<pre><code class="language-console">$ curl --version
+curl 8.21.0 (x86_64-w64-mingw32) libcurl/8.21.0 Schannel zlib/1.3.2 ...
+Features: alt-svc AsynchDNS brotli HSTS HTTPS-proxy IDN IPv6 Kerberos
+          Largefile libz NTLM PSL SPNEGO SSL SSPI threadsafe UnixSockets zstd
+                                       ^ no HTTP2, no HTTP3
+
+$ curl --http2 https://www.cloudflare.com/
+curl: option --http2: the installed libcurl version does not support this
+</code></pre>
+<p>Pick <strong>one</strong> supported route, before class. If installation is blocked, use a
+browser&#39;s Network Protocol column or <code>samples/curl-protocol-compare.txt</code> with
+explicit provenance; the comparison still earns full credit:</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>Option</th><th>Command</th><th>Notes</th></tr></thead><tbody><tr><td><strong>WSL</strong> (recommended)</td><td><code>wsl -e curl --version</code></td><td>Ubuntu&#39;s curl has <code>HTTP2</code>. Prefix every step-1 command with <code>wsl -e</code>.</td></tr><tr><td><strong>Git Bash</strong></td><td>open Git Bash, <code>curl --version</code></td><td>Ships an OpenSSL-backed curl on most installs — <strong>check the Features line</strong>, some builds lack HTTP2.</td></tr><tr><td><strong>Docker</strong></td><td><code>docker run --rm curlimages/curl --version</code></td><td>You already have Docker from HW3.</td></tr></tbody></table></div>
+<p><code>openssl.exe</code> on Windows <em>is</em> fine — Git for Windows and the standalone OpenSSL build
+both work. Only two syntax differences matter, because PowerShell has no <code>&lt;</code>:</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>Unix</th><th>PowerShell equivalent</th></tr></thead><tbody><tr><td><code>openssl s_client … &lt;/dev/null</code></td><td><code>cmd /c &quot;openssl s_client … &lt;NUL&quot;</code></td></tr><tr><td><code>cmd | grep foo</code></td><td><code>cmd | Select-String foo</code></td></tr></tbody></table></div>
+<h3 id="nobody-has---http3-and-that-is-fine">Nobody has <code>--http3</code>, and that is fine</h3>
+<p>Stock curl on Windows, macOS <strong>and</strong> most Linux distributions is built without HTTP/3 —
+it requires a custom build against quiche or ngtcp2. WSL&#39;s curl 8.5.0, for example,
+reports <code>HTTP2</code> but not <code>HTTP3</code>. <strong>Step 1 does not require <code>--http3</code>.</strong> You will prove
+an HTTP/3 <strong>advertisement</strong> by reading <code>alt-svc</code>. This does not demonstrate a
+negotiated or reachable HTTP/3 connection.</p>
+<hr>
+<h2 id="1-which-protocol-did-you-actually-get-5-min">1. Which protocol did you actually get? <em>(5 min)</em></h2>
+<h3 id="11-force-each-version-and-compare">1.1 Force each version and compare</h3>
+<pre><code class="language-bash">curl -sS -o /dev/null --http1.1 \
+  -w &#39;version=%{http_version} code=%{http_code}\n&#39; https://www.cloudflare.com/
+
+curl -sS -o /dev/null --http2 \
+  -w &#39;version=%{http_version} code=%{http_code}\n&#39; https://www.cloudflare.com/
+</code></pre>
+<p><strong>Expected — real output:</strong></p>
+<pre><code class="language-console">version=1.1 code=200
+version=2 code=200
+</code></pre>
+<blockquote>
+<p><code>--http1.1</code> restricts curl to HTTP/1.1; <code>--http2</code> requests HTTP/2 but can
+fall back to HTTP/1.1. Read <code>%{http_version}</code> and the ALPN result.</p>
+</blockquote>
+<h3 id="12-watch-alpn-choose">1.2 Watch ALPN choose</h3>
+<pre><code class="language-bash">curl -sS -o /dev/null -v --http2 https://www.depaul.edu/ 2&gt;&amp;1 | grep -i &#39;alpn\|using HTTP&#39;
+</code></pre>
+<p><strong>Expected — real output:</strong></p>
+<pre><code class="language-console">* ALPN: curl offers h2,http/1.1
+* ALPN: server accepted h2
+* using HTTP/2
+</code></pre>
+<h3 id="13-find-http3-without-an-http3-client">1.3 Find HTTP/3 without an HTTP/3 client</h3>
+<pre><code class="language-bash">curl -sSI https://www.cloudflare.com/ | grep -i &#39;alt-svc\|HTTP/&#39;
+</code></pre>
+<p><strong>Expected — real output:</strong></p>
+<pre><code class="language-console">HTTP/2 103
+HTTP/2 200
+alt-svc: h3=&quot;:443&quot;; ma=86400
+</code></pre>
+<p>Two things to notice and write down:</p>
+<ul>
+<li><code>alt-svc: h3=&quot;:443&quot;</code> is the server saying <em>&quot;I also speak HTTP/3 here; remember that
+for 86 400 seconds.&quot;</em> This is the usual way a browser discovers HTTP/3. (A DNS <code>HTTPS</code>
+record can also advertise it, before the first connection.) <strong>It proves the server
+advertises H3 — not that H3 works from where you are sitting.</strong></li>
+<li><code>HTTP/2 103</code> is an <strong>Early Hints</strong> response arriving before the real <code>200</code>. One
+request, two response heads.</li>
+</ul>
+<p><strong>✅ Checkpoint:</strong> use the example or an already-live assigned hostname in class.
+Your Week 3 container may not have public TLS yet—that is HW4&#39;s task.
+Repeat against your own deployment after the <a href="../../docs/deployment-runbook.html">runbook</a>.
+Separate negotiated version from h3 advertisement in the evidence.</p>
+<hr>
+<h2 id="2-reconstruct-a-real-chain-7-min">2. Reconstruct a real chain <em>(7 min)</em></h2>
+<h3 id="21-dump-the-chain-the-server-actually-sends">2.1 Dump the chain the server actually sends</h3>
+<pre><code class="language-bash">openssl s_client -connect www.depaul.edu:443 -servername www.depaul.edu \
+  -showcerts -alpn h2,http/1.1 &lt;/dev/null 2&gt;&amp;1 \
+  | grep -E &#39;depth=|^Certificate chain|^ [0-9] s:|^   [iv]:|Verification|ALPN protocol|Verify return code&#39;
+</code></pre>
+<p><em>PowerShell:</em> <code>cmd /c &quot;openssl s_client -connect www.depaul.edu:443 -servername www.depaul.edu -showcerts &lt;NUL 2&gt;&amp;1&quot; | Select-String &#39;depth=|Certificate chain|^ \d s:|^   [iv]:|Verif|ALPN&#39;</code></p>
+<p>Drop the <code>grep</code> to see the raw <code>-showcerts</code> output, which also includes the PEM blocks —
+those are the certificates themselves, base64-encoded.</p>
+<p><strong>Expected — real output (verified on OpenSSL 3.0.13 and 3.5.7):</strong></p>
+<pre><code class="language-console">depth=3 C = US, O = Internet Security Research Group, CN = ISRG Root X1
+depth=2 C = US, O = ISRG, CN = Root YR
+depth=1 C = US, O = Let&#39;s Encrypt, CN = YR2
+depth=0 CN = www.depaul.edu
+Certificate chain
+ 0 s:CN = www.depaul.edu
+   i:C = US, O = Let&#39;s Encrypt, CN = YR2
+   v:NotBefore: Jul 22 18:05:32 2026 GMT; NotAfter: Oct 20 18:05:31 2026 GMT
+ 1 s:C = US, O = Let&#39;s Encrypt, CN = YR2
+   i:C = US, O = ISRG, CN = Root YR
+   v:NotBefore: Sep  3 00:00:00 2025 GMT; NotAfter: Sep  2 23:59:59 2028 GMT
+ 2 s:C = US, O = ISRG, CN = Root YR
+   i:C = US, O = Internet Security Research Group, CN = ISRG Root X1
+   v:NotBefore: May 13 00:00:00 2026 GMT; NotAfter: Sep  2 23:59:59 2032 GMT
+Verification: OK
+ALPN protocol: h2
+Verify return code: 0 (ok)
+</code></pre>
+<blockquote>
+<p><strong>Spacing differs by OpenSSL version.</strong> 3.0.x (Ubuntu, WSL) prints <code>CN = www.depaul.edu</code>;
+3.5.x (recent Windows/Homebrew builds) prints <code>CN=www.depaul.edu</code>. Same certificate.
+If a <code>grep</code> pattern of yours suddenly matches nothing, this is usually why.</p>
+</blockquote>
+<p><strong>Answer these three, in writing:</strong></p>
+<ol>
+<li>The server sent <strong>three</strong> certificates (<code>0</code>, <code>1</code>, <code>2</code>). The verification trace shows
+<strong>four</strong> depths. Where did <code>depth=3</code> come from?</li>
+<li>Follow the <code>i:</code> (issuer) lines upward. Confirm each certificate&#39;s issuer is the next
+certificate&#39;s subject. That is the chain.</li>
+<li><code>notAfter − notBefore</code> on the leaf is 90 days. What does that tell you about how this
+certificate is managed?</li>
+</ol>
+<blockquote>
+<p><strong>Answers, so you are not stuck:</strong> (1) your own trust store — the root is never sent
+on the wire. (2) leaf ← YR2 ← Root YR ← ISRG Root X1. (3) it must be automated.</p>
+</blockquote>
+<h3 id="22-read-just-the-fields-you-need">2.2 Read just the fields you need</h3>
+<pre><code class="language-bash">openssl s_client -connect www.depaul.edu:443 -servername www.depaul.edu 2&gt;/dev/null \
+  &lt;/dev/null | openssl x509 -noout -subject -issuer -dates -ext subjectAltName -serial
+</code></pre>
+<p><strong>Expected — real output:</strong></p>
+<pre><code class="language-console">subject=CN = www.depaul.edu
+issuer=C = US, O = Let&#39;s Encrypt, CN = YR2
+notBefore=Jul 22 18:05:32 2026 GMT
+notAfter=Oct 20 18:05:31 2026 GMT
+X509v3 Subject Alternative Name:
+    DNS:www.depaul.edu
+serial=052BCEC3A1F722A7D16EC6BF11A481CE3438
+</code></pre>
+<p><strong>Keep this command.</strong> It is the one you will use for the rest of the quarter, and its
+output (or the Windows <code>tls-inspect.ps1</code> equivalent) feeds HW4 Task 6.</p>
+<p><strong>✅ Checkpoint:</strong> save the example outputs now; repeat on your own domain after
+HW4 provisions its certificate. An absent pre-HW4 certificate is not a missed prerequisite.</p>
+<hr>
+<h2 id="3-diagnose-three-failures-from-the-error-text-alone-8-min">3. Diagnose three failures from the error text alone <em>(8 min)</em></h2>
+<p><code>badssl.com</code> runs deliberately broken endpoints. All five below were verified live on
+2026-08-15.</p>
+<p><strong>For each host: write down your predicted failure first, then run it.</strong> Do not skip
+the prediction — the point of this step is calibration, not command execution.</p>
+<pre><code class="language-bash">for h in expired.badssl.com wrong.host.badssl.com incomplete-chain.badssl.com; do
+  echo &quot;=== $h ===&quot;
+  curl -sS -o /dev/null &quot;https://$h/&quot; 2&gt;&amp;1 | head -1
+done
+</code></pre>
+<p><strong>Expected — real output:</strong></p>
+<pre><code class="language-console">=== expired.badssl.com ===
+curl: (60) SSL certificate problem: certificate has expired
+=== wrong.host.badssl.com ===
+curl: (60) SSL: no alternative certificate subject name matches target host name
+      &#39;wrong.host.badssl.com&#39;
+=== incomplete-chain.badssl.com ===
+curl: (60) SSL certificate problem: unable to get local issuer certificate
+</code></pre>
+<h3 id="31-now-prove-each-diagnosis-with-openssl">3.1 Now prove each diagnosis with <code>openssl</code></h3>
+<pre><code class="language-bash">openssl s_client -connect incomplete-chain.badssl.com:443 \
+  -servername incomplete-chain.badssl.com -showcerts &lt;/dev/null 2&gt;&amp;1 \
+  | grep -E &#39;depth=|verify error|^Certificate chain|^ [0-9] s:|^   i:|Verify return code&#39; | head -8
+</code></pre>
+<p><strong>Expected — real output:</strong></p>
+<pre><code class="language-console">depth=0 CN = *.badssl.com
+verify error:num=20:unable to get local issuer certificate
+verify error:num=21:unable to verify the first certificate
+Certificate chain
+ 0 s:CN = *.badssl.com
+   i:C = US, O = Let&#39;s Encrypt, CN = YR2
+Verify return code: 21 (unable to verify the first certificate)
+</code></pre>
+<p><strong>The chain list has exactly one entry.</strong> The server named its issuer (<code>i:</code>) but did not
+send it. That absence is the whole diagnosis.</p>
+<p>Compare <code>expired.badssl.com</code>, whose chain is <em>complete</em> but whose leaf is 11 years stale:</p>
+<pre><code class="language-console"> 0 s:OU = Domain Control Validated, OU = PositiveSSL Wildcard, CN = *.badssl.com
+   v:NotBefore: Apr  9 00:00:00 2015 GMT; NotAfter: Apr 12 23:59:59 2015 GMT
+verify error:num=10:certificate has expired
+</code></pre>
+<h3 id="32-the-trap-two-tools-two-different-questions">3.2 The trap: two tools, two different questions</h3>
+<pre><code class="language-bash">H=wrong.host.badssl.com
+openssl s_client -brief -connect $H:443 -servername $H &lt;/dev/null 2&gt;&amp;1 | grep Verif
+openssl s_client -brief -connect $H:443 -servername $H -verify_hostname $H &lt;/dev/null 2&gt;&amp;1 | grep -i &#39;verif\|mismatch&#39;
+</code></pre>
+<p><strong>Expected — real output:</strong></p>
+<pre><code class="language-console">Verification: OK                          &lt;- first command
+verify error:num=62:hostname mismatch     &lt;- second command
+Verification error: hostname mismatch
+</code></pre>
+<blockquote>
+<p><strong><code>openssl s_client</code> does not check the hostname unless you ask it to.</strong> It validated
+the <em>chain</em> and reported OK. <code>curl</code> checks both and refused. When two tools disagree,
+they are usually answering different questions.</p>
+</blockquote>
+<p>Confirm why, with the SAN:</p>
+<pre><code class="language-bash">openssl s_client -connect $H:443 -servername $H 2&gt;/dev/null &lt;/dev/null \
+  | openssl x509 -noout -ext subjectAltName
+</code></pre>
+<pre><code class="language-console">X509v3 Subject Alternative Name:
+    DNS:*.badssl.com, DNS:badssl.com
+</code></pre>
+<p><code>*.badssl.com</code> matches <strong>one</strong> label. <code>wrong.host.badssl.com</code> has two. No match.</p>
+<h3 id="33-write-the-error-number-table-into-your-notes">3.3 Write the error-number table into your notes</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th style="text-align:right"><code>verify error:num=</code></th><th>Meaning</th><th>The real fix</th></tr></thead><tbody><tr><td style="text-align:right"><strong>10</strong></td><td>certificate has expired</td><td>Renew — then find out why renewal did not run</td></tr><tr><td style="text-align:right"><strong>20</strong></td><td>unable to get local issuer certificate</td><td>Serve the <strong>full chain</strong>, not just the leaf</td></tr><tr><td style="text-align:right"><strong>21</strong></td><td>unable to verify the first certificate</td><td>Same cause as 20, seen from the other end</td></tr><tr><td style="text-align:right"><strong>62</strong></td><td>hostname mismatch</td><td>Reissue with the correct SAN</td></tr></tbody></table></div>
+<p>None of these is fixed by <code>--insecure</code>. All four are on the Week 6 midterm.</p>
+<hr>
+<h2 id="4-find-your-own-domain-in-a-certificate-transparency-log-4-min--the-first-thing-to-cut-if-you-are-behind">4. Find your own domain in a Certificate Transparency log <em>(4 min — the first thing to cut if you are behind)</em></h2>
+<p>Every publicly-trusted certificate must be logged. That means every certificate ever
+issued for your domain is a public record you can query.</p>
+<pre><code class="language-bash">curl -sS &#39;https://crt.sh/?q=depaul.edu&amp;output=json&amp;exclude=expired&amp;match=%3D&#39; \
+  | head -c 400
+</code></pre>
+<p>Or just open <a href="https://crt.sh/?q=depaul.edu&amp;exclude=expired&amp;match=%3D">https://crt.sh/?q=depaul.edu&amp;exclude=expired&amp;match=%3D</a> in a browser.</p>
+<blockquote>
+<p><strong>Use the <code>&amp;match=%3D</code> (exact-match) form.</strong> During authoring, the plain
+<code>?q=depaul.edu</code> form timed out and <code>?q=depaul.edu&amp;exclude=expired</code> returned a 404,
+while the exact-match form returned 200. crt.sh is one volunteer-run service and it is
+genuinely flaky.</p>
+</blockquote>
+<p><strong>Expected — real output, author-captured on 2026-08-15 and reformatted for reading. The
+raw command emits JSON, and these rows will have changed by the time you run it:</strong></p>
+<pre><code class="language-console">entries returned: 9
+
+crt.sh id     issuer                                     not_before   not_after
+28201765906   C=US, O=Let&#39;s Encrypt, CN=YR2              2026-07-24   2026-10-22
+28201759287   C=US, O=Let&#39;s Encrypt, CN=YR2              2026-07-24   2026-10-22
+26532101078   C=US, O=Let&#39;s Encrypt, CN=R13              2026-05-21   2026-08-19
+24475081130   C=US, O=Amazon, CN=Amazon RSA 2048 M04     2026-02-17   2027-03-18
+21548372354   C=US, O=Internet2, CN=InCommon ECC Server  2025-10-07   2026-11-07
+</code></pre>
+<p><strong>Three things to notice:</strong></p>
+<ol>
+<li>The top two rows are identical apart from the id. That is a <strong>precertificate and its
+certificate</strong> — normal, not a duplicate issuance. (Not every duplicate pair is; CAs
+also log to several logs.)</li>
+<li><code>depaul.edu</code> has live certificates from <strong>three different CAs</strong> — Let&#39;s Encrypt,
+Amazon and InCommon. That is what a real organization looks like, and it is exactly
+why a careless CAA record breaks things (step 4.2).</li>
+<li>Any certificate here that <em>you</em> did not request is worth <strong>investigating</strong> — it may be
+your CDN or infrastructure you forgot you had running, or it may be a compromise of
+your DNS, registrar or CA account.</li>
+</ol>
+<h3 id="41-now-look-up-your-own-domain">4.1 Now look up your own domain</h3>
+<p>Do it. If you find a certificate you do not recognize, tell the instructor.</p>
+<h3 id="42-check-the-caa-record--yours-and-depauls">4.2 Check the CAA record — yours and DePaul&#39;s</h3>
+<pre><code class="language-bash">dig +short CAA github.com
+dig +short CAA depaul.edu
+</code></pre>
+<p><em>No <code>dig</code>?</em> Use <code>https://cloudflare-dns.com/dns-query?name=github.com&amp;type=CAA</code> with an
+<code>accept: application/dns-json</code> header, or any DoH web UI.</p>
+<p><strong>Expected — real output:</strong></p>
+<pre><code class="language-console">$ dig +short CAA github.com
+0 issue &quot;digicert.com&quot;
+0 issue &quot;globalsign.com&quot;
+0 issue &quot;letsencrypt.org&quot;
+0 issuewild &quot;digicert.com&quot;
+
+$ dig +short CAA depaul.edu
+                          &lt;- empty. No CAA record. Any public CA may issue.
+</code></pre>
+<blockquote>
+<p>Our own university has not set one. You set yours in HW2 and re-check it in HW4
+Task 6 — and given what step 4 just
+showed you about DePaul using three CAs, you now know why writing that record
+carelessly is how you break a renewal six weeks from now.</p>
+</blockquote>
+<hr>
+<h2 id="5-deploy-watch-the-gate-stop-you-roll-back-11-min">5. Deploy, watch the gate stop you, roll back <em>(11 min)</em></h2>
+<p>You will build the real GitHub Actions version in HW4. Here you run the <strong>shape</strong> of it,
+offline, in ninety seconds, so that the HW4 version is your second attempt and not your
+first.</p>
+<p><code>samples/deploy-sim.mjs</code> runs a real HTTP server on <code>127.0.0.1</code> and makes real HTTP
+requests to it. The health gate is a genuine network check.</p>
+<h3 id="51-the-happy-path">5.1 The happy path</h3>
+<pre><code class="language-bash">cd weeks/week04/samples
+node deploy-sim.mjs
+</code></pre>
+<p><strong>Expected — real output:</strong></p>
+<pre><code class="language-console">[cluster  ] live release v1.0.0 digest sha256:2485f4d55aae6c5b073114bc
+[test     ] npm test ................................. 12 passed, 0 failed
+[build    ] built v1.1.0
+[build    ] digest sha256:0351e58a8e1677f197d37d18   &lt;- deployed, not the tag
+[build    ] previous digest recorded for rollback: sha256:2485f4d55aae6c5b073114bc
+[deploy   ] rolling out sha256:0351e58a8e1677f197d37d18
+[gate     ] attempt 1/6: HTTP 200 digest=sha256:0351e58a8e… | status-only gate: PASS | digest gate: PASS
+[result   ] DEPLOY SUCCEEDED. live digest sha256:0351e58a8e1677f197d37d18
+
+pipeline exit code: 0
+</code></pre>
+<h3 id="52-the-trap-a-rolling-deploy">5.2 The trap: a rolling deploy</h3>
+<p>Almost every modern platform deploys <strong>rolling</strong>, with zero downtime. That means for the
+first few seconds the load balancer is still routing to the <em>old</em> instance — which is
+perfectly healthy.</p>
+<pre><code class="language-bash">node deploy-sim.mjs --rolling
+</code></pre>
+<p><strong>Expected — real output:</strong></p>
+<pre><code class="language-console">[cluster  ] ROLLING cutover: the old instance keeps serving during rollout
+[deploy   ] rolling out sha256:0351e58a8e1677f197d37d18
+[gate     ] attempt 1/6: HTTP 200 digest=sha256:2485f4d55a… | status-only gate: PASS | digest gate: WAIT old release answering
+[gate     ] attempt 2/6: HTTP 200 digest=sha256:2485f4d55a… | status-only gate: PASS | digest gate: WAIT old release answering
+[gate     ] attempt 3/6: HTTP 200 digest=sha256:2485f4d55a… | status-only gate: PASS | digest gate: WAIT old release answering
+[gate     ] attempt 4/6: HTTP 200 digest=sha256:0351e58a8e… | status-only gate: PASS | digest gate: PASS
+[result   ] DEPLOY SUCCEEDED. live digest sha256:0351e58a8e1677f197d37d18
+</code></pre>
+<blockquote>
+<p><strong>Look at attempts 1–3.</strong> A health gate that only asks <em>&quot;did I get a 200?&quot;</em> would have
+declared success on attempt 1 — while the release it just deployed had not started
+serving a single request. If that release were broken, the pipeline would have gone
+green anyway and the crash-loop would have been invisible.</p>
+<p><strong>The fix is one field.</strong> <code>/healthz</code> reports which digest is answering, and the gate
+checks for the digest it just deployed. This is HW4 rubric item B4.</p>
+</blockquote>
+<h3 id="53-the-path-that-matters">5.3 The path that matters</h3>
+<pre><code class="language-bash">node deploy-sim.mjs --broken
+</code></pre>
+<p><strong>Expected — real output (abridged):</strong></p>
+<pre><code class="language-console">[build    ] built v1.1.0-bad
+[build    ] previous digest recorded for rollback: sha256:2485f4d55aae6c5b073114bc
+[deploy   ] rolling out sha256:5fd9beebe2624ea65afbf27b
+[gate     ] attempt 1/6: HTTP 503 digest=sha256:5fd9beebe2… | status-only gate: FAIL | digest gate: FAIL unhealthy
+...
+[gate     ] all 6 attempts failed -&gt; FAIL
+[rollback ] health gate failed; rolling back to sha256:2485f4d55aae6c5b073114bc
+[gate     ] attempt 1/6: HTTP 200 digest=sha256:2485f4d55a… | status-only gate: PASS | digest gate: PASS
+[result   ] DEPLOY FAILED and was ROLLED BACK. live digest sha256:2485f4d55aae6c5b073114bc
+[result   ] service is serving again
+
+pipeline exit code: 1
+</code></pre>
+<h3 id="54-self-check-in-writing--these-rehearse-hw4-task-5">5.4 Self-check, in writing — these rehearse HW4 Task 5</h3>
+<ol>
+<li>The rollback <strong>succeeded</strong>, and the pipeline still <strong>exited 1</strong>. Why is that correct?</li>
+<li>In the <code>--rolling</code> run, what exactly would a status-only gate have gotten wrong, and
+what is the smallest change to <code>/healthz</code> that fixes it?</li>
+<li>The rollback target is a <strong>digest</strong>, not the tag <code>v1.0.0</code>. Why does that distinction
+matter, given what you learned about <code>:latest</code> in Week 3?</li>
+<li><code>previous digest recorded for rollback</code> happens <strong>before</strong> the deploy. What breaks if
+you try to record it afterwards?</li>
+<li>If the health gate had checked the database instead of the process, and the database
+blipped for 4 seconds, what would this pipeline have done — and would that have been
+right?</li>
+</ol>
+<blockquote>
+<p><strong>Answers.</strong> (1) A deploy that did not ship is a failed deploy; a green pipeline would
+tell you a broken release went out fine. (2) It would have passed on the <em>old</em>
+instance&#39;s 200 and never noticed the new release was not serving; the fix is to have
+<code>/healthz</code> return the running digest and grep for it. (3) A tag is a mutable pointer —
+it may now point at the broken image. (4) The deploy has already overwritten &quot;current&quot;,
+so you no longer have a name for the thing to go back to. (5) It would have rolled back
+a perfectly good release. Liveness must not depend on anything outside the process;
+<strong>readiness</strong> is where dependency checks belong.</p>
+</blockquote>
+<p><strong>✅ Deliverable for the exit ticket:</strong> paste the last three lines of your <code>--broken</code>
+run, plus one sentence naming which gate stopped the deploy.</p>
+<hr>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3 id="curl-option---http2-the-installed-libcurl-version-does-not-support-this"><code>curl: option --http2: the installed libcurl version does not support this</code></h3>
+<p>Your curl is built without HTTP/2 — almost certainly Windows&#39; bundled Schannel build.
+See <a href="#0-toolchain-check--do-this-before-class-5-min">§0</a>. Use <code>wsl -e curl</code>, Git Bash, or
+<code>docker run --rm curlimages/curl</code>.</p>
+<h3 id="openssl-s_client-just-sits-there-and-never-returns"><code>openssl s_client</code> just sits there and never returns</h3>
+<p>It is waiting on stdin. Give it EOF: <code>&lt;/dev/null</code> on Unix, or
+<code>cmd /c &quot;openssl … &lt;NUL&quot;</code> in PowerShell. <code>Ctrl+C</code> also works but is untidy.</p>
+<h3 id="the--operator-is-reserved-for-future-use"><code>The &#39;&lt;&#39; operator is reserved for future use.</code></h3>
+<p>PowerShell has no input redirection. Wrap the command:
+<code>&amp; $env:ComSpec /c &#39;openssl s_client -connect host:443 &lt;NUL 2&gt;&amp;1&#39;</code>.</p>
+<h3 id="the-certificate-i-get-back-is-for-a-domain-i-have-never-heard-of">The certificate I get back is for a domain I have never heard of</h3>
+<p>You omitted <code>-servername</code>. <code>openssl s_client</code> does <strong>not</strong> send SNI automatically, so a
+shared-IP host handed you its default certificate. Always pass
+<code>-servername &lt;the same host&gt;</code>.</p>
+<h3 id="openssl-output-looks-different-from-the-examples"><code>openssl</code> output looks different from the examples</h3>
+<p>OpenSSL 3.0.x (Ubuntu, WSL, most current Linux) prints distinguished names with spaces —
+<code>CN = www.depaul.edu</code>. OpenSSL 3.5.x (recent Windows and Homebrew builds) prints
+<code>CN=www.depaul.edu</code>. Same certificate, different formatting. Every command in this lab
+was verified on <strong>both</strong>. If a <code>grep</code> of yours matches nothing, loosen the pattern.</p>
+<h3 id="crtsh-returns-a-postgres-error-a-502-or-times-out">crt.sh returns a Postgres error, a 502, or times out</h3>
+<p>Known and common — it is one volunteer-run service. Real error text seen during
+authoring: <code>FATAL: terminating connection due to conflict with recovery</code>. Retry two or
+three times, then fall back to:</p>
+<ul>
+<li><a href="https://transparencyreport.google.com/https/certificates">https://transparencyreport.google.com/https/certificates</a> (Google&#39;s CT search), or</li>
+<li><a href="https://search.censys.io/">https://search.censys.io/</a> (free account required), or</li>
+<li>the captured output in <a href="samples/ct-log-depaul.txt"><code>samples/ct-log-depaul.txt</code></a>.</li>
+</ul>
+<h3 id="a-badsslcom-endpoint-does-not-fail-the-way-this-document-says">A badssl.com endpoint does not fail the way this document says</h3>
+<p>All five were verified live on 2026-08-15, but badssl is a free community service and
+does go down. Fall back to <a href="samples/badssl-diagnoses.txt"><code>samples/badssl-diagnoses.txt</code></a>,
+which has the full captured output for all five hosts, and run the diagnosis exercise
+against that.</p>
+<h3 id="node-deploy-simmjs-fails-with-eaddrinuse"><code>node deploy-sim.mjs</code> fails with <code>EADDRINUSE</code></h3>
+<p>Something is already on port 8088. Use <code>node deploy-sim.mjs --port 8099</code>.</p>
+<h3 id="i-have-no-network-at-all">I have no network at all</h3>
+<p>Every step has a captured transcript in <a href="samples/index.html"><code>samples/</code></a>:
+<code>curl-protocol-compare.txt</code>, <code>openssl-chain-good.txt</code>, <code>badssl-diagnoses.txt</code>,
+<code>ct-log-depaul.txt</code>, <code>caa-and-headers.txt</code>. Step 5 needs no network at all — it is
+entirely local.</p>
+<hr>
+<h2 id="what-you-should-walk-out-with">What you should walk out with</h2>
+<ul>
+<li><input disabled="" type="checkbox"> The negotiated HTTP version for <strong>your own domain</strong>, and whether it advertises <code>h3</code></li>
+<li><input disabled="" type="checkbox"> A full <code>-showcerts</code> chain dump for <strong>your own domain</strong></li>
+<li><input disabled="" type="checkbox"> The four <code>verify error:num=</code> codes and what each one actually means</li>
+<li><input disabled="" type="checkbox"> Your domain&#39;s CT log history, and whether anything in it surprises you</li>
+<li><input disabled="" type="checkbox"> Your domain&#39;s CAA record status (set in HW2; re-checked in HW4 Task 6)</li>
+<li><input disabled="" type="checkbox"> The last three lines of a failed-and-rolled-back pipeline run</li>
+</ul>
+
+</main>
+<footer>Individual coursework. D2L contains dated deadlines, submissions and private course access.</footer>
+</body>
+</html>

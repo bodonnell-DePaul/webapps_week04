@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CampusPulse full-stack sample — axios ⇄ Express + CORS - CSC 436</title>
+<link rel="stylesheet" href="../../../../assets/course.css">
+<link rel="icon" type="image/svg+xml" href="../../../../assets/course-icon.svg">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header><a class="course-name" href="../../../../index.html">CSC 436</a>
+<nav aria-label="Course">
+<a href="../../../../docs/getting-started.html">Start here</a>
+<a href="../../../../docs/new_syllabus.html">Syllabus</a>
+<a href="../../../../docs/course-map.html">Course map</a>
+<a href="../../../../final-project/index.html">Final project</a>
+</nav></header>
+<main id="main">
+<p class="source-link"><a href="README.md" download>Download Markdown source</a></p>
+<h1 id="campuspulse-full-stack-sample--axios--express--cors">CampusPulse full-stack sample — axios ⇄ Express + CORS</h1>
+<p>Week 4 Blocks B and C. A React page calls an Express API <strong>on a different
+origin</strong> using a configured axios instance:</p>
+<ul>
+<li>The frontend runs on <code>http://localhost:5173</code>.</li>
+<li>The API runs on <code>http://localhost:3001/api</code>.</li>
+</ul>
+<p>The two origins are deliberate: the browser enforces CORS, so the backend&#39;s
+CORS policy is real. Every code excerpt on the Block B and C slides comes
+from this folder. All data is synthetic and stored in memory, so a restart
+resets it.</p>
+<pre><code>campuspulse-fullstack/
+├── backend/                     Express 5 + cors (Block C)
+│   ├── src/server.mjs           entry point: PORT, CORS_ORIGINS
+│   ├── src/app.mjs              middleware order, 404 + JSON error handler
+│   ├── src/cors-options.mjs     exact-origin allowlist, preflight settings
+│   ├── src/incidents.mjs        GET / POST / PUT / PATCH / DELETE routes
+│   └── test/api.test.mjs        CRUD, errors, CORS + preflight tests
+└── frontend/                    React + TypeScript + Vite + axios (Block B)
+    ├── src/api/client.ts        axios.create, interceptors, ApiError
+    ├── src/api/incidents.ts     one typed function per endpoint
+    ├── src/App.tsx              loading/error state, AbortController, demos
+    └── test/api.test.ts         the real axios calls against the real API
+</code></pre>
+<h2 id="run-it-windows-powershell-or-macos-terminal">Run it (Windows PowerShell or macOS Terminal)</h2>
+<p>You need Node.js 20.19 or newer. The course standard is Node 24. Open <strong>two</strong>
+terminals at this folder (<code>weeks/week04/samples/campuspulse-fullstack</code>).</p>
+<pre><code class="language-bash"># Terminal 1 — the API
+cd backend
+npm install
+npm start            # CampusPulse API on http://localhost:3001/api
+</code></pre>
+<pre><code class="language-bash"># Terminal 2 — the frontend
+cd frontend
+npm install
+npm run dev          # open http://localhost:5173
+</code></pre>
+<p>The commands are the same on Windows and macOS. To check the API on its own:</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>Check</th><th>Windows PowerShell</th><th>macOS / Linux</th></tr></thead><tbody><tr><td>Health</td><td><code>Invoke-RestMethod http://localhost:3001/api/healthz</code></td><td><code>curl -s http://localhost:3001/api/healthz</code></td></tr><tr><td>List</td><td><code>Invoke-RestMethod &quot;http://localhost:3001/api/incidents?status=resolved&quot;</code></td><td><code>curl -s &quot;http://localhost:3001/api/incidents?status=resolved&quot;</code></td></tr><tr><td>Create</td><td><code>Invoke-RestMethod -Method Post -Uri http://localhost:3001/api/incidents -ContentType application/json -Body &#39;{&quot;title&quot;:&quot;Projector offline&quot;,&quot;service&quot;:&quot;d2l&quot;}&#39;</code></td><td><code>curl -s -X POST http://localhost:3001/api/incidents -H &#39;Content-Type: application/json&#39; -d &#39;{&quot;title&quot;:&quot;Projector offline&quot;,&quot;service&quot;:&quot;d2l&quot;}&#39;</code></td></tr><tr><td>Preflight</td><td><code>curl.exe -i -X OPTIONS http://localhost:3001/api/incidents -H &quot;Origin: http://localhost:5173&quot; -H &quot;Access-Control-Request-Method: PATCH&quot;</code></td><td><code>curl -i -X OPTIONS http://localhost:3001/api/incidents -H &#39;Origin: http://localhost:5173&#39; -H &#39;Access-Control-Request-Method: PATCH&#39;</code></td></tr></tbody></table></div>
+<p>In Windows PowerShell 5.1, <code>curl</code> is an alias for <code>Invoke-WebRequest</code>. Type
+<code>curl.exe</code> to run the real curl that ships with Windows 10 and 11.</p>
+<h2 id="what-to-try-in-class">What to try in class</h2>
+<ol>
+<li><p><strong>Every HTTP method.</strong> Create an incident (POST), change its status
+(PATCH), rename it (PUT) and delete it (DELETE). Watch the <em>Requests</em>
+table and the DevTools <strong>Network</strong> tab side by side.</p>
+</li>
+<li><p><strong>Preflight.</strong> In DevTools, filter by <code>incidents</code> and look for <code>OPTIONS</code>
+(preflight) requests. Two things trigger them:</p>
+<ul>
+<li>The axios interceptor adds a custom <code>X-Request-Id</code> header, so even
+GETs are preflighted.</li>
+<li>POST, PUT and PATCH send <code>Content-Type: application/json</code>.</li>
+</ul>
+<p>The browser then caches each answer for 10 minutes
+(<code>Access-Control-Max-Age: 600</code>), so you see one preflight per URL and
+method, not one per click.</p>
+</li>
+<li><p><strong>Cancel and timeout.</strong> Click <em>Slow GET</em> and then <em>Cancel</em>. That is
+<code>AbortController</code>. Then click <em>GET past the 4 s timeout</em>, which shows
+axios&#39;s <code>timeout</code>.</p>
+</li>
+<li><p><strong>A real CORS failure.</strong> Stop Terminal 2 and run
+<code>npm run dev:wrong-origin</code>, then open <code>http://localhost:5174</code>.</p>
+<ul>
+<li>The page shows a network error.</li>
+<li>The DevTools Console shows <em>&quot;blocked by CORS policy&quot;</em>.</li>
+<li>The API terminal shows that the server never saw a GET: the browser
+stopped at the failed preflight.</li>
+<li>Fix it without editing code. Restart the API with the new origin
+added; the commands are below.</li>
+</ul>
+</li>
+</ol>
+<pre><code class="language-powershell"># Windows PowerShell
+$env:CORS_ORIGINS = &quot;http://localhost:5173,http://localhost:5174&quot;; npm start
+</code></pre>
+<pre><code class="language-bash"># macOS / Linux
+CORS_ORIGINS=http://localhost:5173,http://localhost:5174 npm start
+</code></pre>
+<h2 id="tests">Tests</h2>
+<pre><code class="language-bash">cd backend  &amp;&amp; npm test        # 7 tests: CRUD, error shape, CORS headers, preflight
+cd frontend &amp;&amp; npm test        # 4 tests: axios functions, ApiError, abort/timeout, interceptors
+cd frontend &amp;&amp; npm run build   # type-check + production bundle
+</code></pre>
+<p>The frontend tests import the backend app. Run <code>npm install</code> in <strong>both</strong>
+folders first.</p>
+<h2 id="production-notes-week-9-goes-deeper">Production notes (Week 9 goes deeper)</h2>
+<ul>
+<li>CORS is not authentication. It only controls which <em>browser</em> pages may
+read responses. curl, scripts and other servers ignore it.</li>
+<li>Keep an exact allowlist. Never reflect any <code>Origin</code> back, and never
+combine <code>*</code> with credentials.</li>
+<li>A dev-server proxy (Vite <code>server.proxy</code>) or serving both from one origin
+avoids CORS entirely. This sample keeps them separate on purpose.</li>
+<li>Use HTTPS (Week 4 Block A) in front of both in production.</li>
+</ul>
+
+</main>
+<footer>Individual coursework. D2L contains dated deadlines, submissions and private course access.</footer>
+</body>
+</html>

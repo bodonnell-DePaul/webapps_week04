@@ -1,0 +1,18 @@
+# Captured 2026-08-15 from crt.sh. Real output.
+# NOTE: crt.sh is a single volunteer-run service and intermittently returns 502/500.
+#       Retry, or use one of the fallbacks in lab.md step 4.
+
+
+$ curl -sS 'https://crt.sh/?q=depaul.edu&output=json&exclude=expired&match=%3D' | jq ...
+
+entries returned: 9
+
+crt.sh id     issuer                               not_before   not_after
+28201765906   C=US, O=Let's Encrypt, CN=YR2        2026-07-24   2026-10-22
+28201759287   C=US, O=Let's Encrypt, CN=YR2        2026-07-24   2026-10-22
+26532101078   C=US, O=Let's Encrypt, CN=R13        2026-05-21   2026-08-19
+26532093543   C=US, O=Let's Encrypt, CN=R13        2026-05-21   2026-08-19
+24475081130   C=US, O=Amazon, CN=Amazon RSA 2048 M04 2026-02-17   2027-03-18
+21548372354   C=US, O=Internet2, CN=InCommon ECC Server CA 2 2025-10-07   2026-11-07
+21548349767   C=US, O=Internet2, CN=InCommon ECC Server CA 2 2025-10-07   2026-11-07
+21425680096   C=US, O=Internet2, CN=InCommon ECC Server CA 2 2025-10-02   2026-11-02

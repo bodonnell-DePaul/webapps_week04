@@ -1,0 +1,17 @@
+{
+  "name": "campuspulse-fullstack-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CSC 436 Week 4 — Express API with CORS for the axios frontend.",
+  "engines": { "node": ">=20.19" },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "cors": "2.8.6",
+    "express": "5.2.1"
+  }
+}

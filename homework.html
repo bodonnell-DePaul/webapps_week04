@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HW4 — Connect It: Your Frontend, Your API, Over HTTPS - CSC 436</title>
+<link rel="stylesheet" href="../../assets/course.css">
+<link rel="icon" type="image/svg+xml" href="../../assets/course-icon.svg">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header><a class="course-name" href="../../index.html">CSC 436</a>
+<nav aria-label="Course">
+<a href="../../docs/getting-started.html">Start here</a>
+<a href="../../docs/new_syllabus.html">Syllabus</a>
+<a href="../../docs/course-map.html">Course map</a>
+<a href="../../final-project/index.html">Final project</a>
+</nav></header>
+<main id="main">
+<p class="source-link"><a href="homework.md" download>Download Markdown source</a></p>
+<h1 id="hw4--connect-it-your-frontend-your-api-over-https">HW4 — Connect It: Your Frontend, Your API, Over HTTPS</h1>
+<p><strong>CSC 436 — Web Application Systems</strong> · 100 points · Individual (your own CampusPulse
+project) · Due before Week 5.</p>
+<blockquote>
+<p><strong>The point of this assignment, in one sentence.</strong> Make your React frontend talk to
+your own API through one well-built axios client, have that API answer with correct
+status codes and an exact CORS policy, put both live on your own domain over HTTPS —
+and prove every claim with evidence you captured, not screenshots of green checkmarks.</p>
+</blockquote>
+<hr>
+<h2 id="1-where-this-fits">1. Where this fits</h2>
+<p>This is <strong>Gate 2 — Live and secure</strong> of the CampusPulse final project, and it is the
+homework for all three Week 4 blocks:</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>Lecture block</th><th>What this homework asks you to do with it</th></tr></thead><tbody><tr><td><strong>A — HTTP and TLS: the big picture</strong></td><td>Inspect <em>your own</em> certificate chain (Windows PowerShell or macOS <code>openssl</code>) and see which HTTP version your users actually get</td></tr><tr><td><strong>B — Calling your API with axios</strong></td><td>One configured axios client, one typed function per endpoint, one <code>ApiError</code>, cancellation</td></tr><tr><td><strong>C — Express and CORS</strong></td><td>Routes, status codes, one error shape, and an exact origin allowlist — then the deploy, budget alert and rollback</td></tr></tbody></table></div>
+<p>Everything you build here is reused, not thrown away:</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>What you build here</th><th>Where it comes back</th></tr></thead><tbody><tr><td>Public HTTPS deployment (frontend + API)</td><td>Week 5 caching, CDN and Core Web Vitals — needs a real origin</td></tr><tr><td>The axios client and <code>ApiError</code></td><td>Every later feature; Week 7 live updates; Week 8 adds the auth header in one place</td></tr><tr><td>The CORS allowlist</td><td>Week 9 formalizes CORS and security headers on top of it</td></tr><tr><td>Pipeline with digest and rollback</td><td>Week 7 onward — every later change deploys through it</td></tr><tr><td>Health endpoint</td><td>Week 10 Game Day — the probe is how you detect the fault</td></tr><tr><td>Budget alert</td><td>The rest of the course, and your bank account</td></tr></tbody></table></div>
+<p><strong>You will not do this work twice.</strong> Week 5 assumes this exact system.</p>
+<p><strong>Starting points — use them.</strong> The
+<a href="samples/campuspulse-fullstack/index.html">CampusPulse full-stack sample</a> is the code
+from Blocks B and C: an Express API with CORS and a React + axios frontend, with tests.
+You may build on it, port its ideas to your HW3 stack, or write your own. The
+<a href="../../docs/deployment-runbook.html">local-to-staging deployment runbook</a> is the concrete
+no-personal-card deployment path (course-provisioned Linux/Docker + Caddy + your own or
+assigned Cloudflare DNS). Read-only public operation is required until authorization is
+taught in Week 8; <strong>HTTPS is not access control</strong>.</p>
+<hr>
+<h2 id="2-prerequisites">2. Prerequisites</h2>
+<p>Have all of these <strong>before</strong> you start.</p>
+<ul>
+<li><input disabled="" type="checkbox"> <strong>A domain you control</strong> (HW1) with DNS you can edit (HW2).</li>
+<li><input disabled="" type="checkbox"> <strong>Your HW3 work:</strong> a containerized backend exposing a health endpoint, and a
+React + TypeScript build. (Any backend language is fine — see below.)</li>
+<li><input disabled="" type="checkbox"> <strong>Node.js 20.19+</strong> and npm, for the frontend and (if you use it) the sample API.</li>
+<li><input disabled="" type="checkbox"> <strong>A GitHub repository</strong> for the project, with Actions enabled.</li>
+<li><input disabled="" type="checkbox"> <strong>A hosting account</strong> where you can deploy a container, or the course environment.</li>
+<li><input disabled="" type="checkbox"> <strong><code>curl</code>.</strong> Windows 10/11 ships <code>curl.exe</code>; in Windows PowerShell type <code>curl.exe</code>,
+because <code>curl</code> there is an alias for <code>Invoke-WebRequest</code>.</li>
+<li><input disabled="" type="checkbox"> <strong>A way to inspect TLS — either one is fine:</strong><ul>
+<li><strong>Windows (no OpenSSL needed):</strong> PowerShell 5.1 or 7 and
+<a href="samples/tls-inspect.ps1"><code>samples/tls-inspect.ps1</code></a>, which uses only .NET classes
+that ship with Windows. <code>certutil</code> is built in too.</li>
+<li><strong>macOS / Linux:</strong> <code>openssl</code> (LibreSSL on stock macOS is fine), or the same
+<code>tls-inspect.ps1</code> under PowerShell 7.</li>
+</ul>
+</li>
+</ul>
+<blockquote>
+<p><strong>Backend agnosticism.</strong> Express is what the lecture used, but any language and
+framework is accepted — FastAPI, ASP.NET Core, Spring, Go, anything. You are graded on
+<strong>observable behavior at the network boundary</strong>: methods, status codes, headers, CORS
+and the error body. Nobody will read your framework.</p>
+</blockquote>
+<hr>
+<h2 id="3-tasks">3. Tasks</h2>
+<p>Do them in this order. Tasks 1–3 run entirely on <code>localhost</code>; get them right before you
+deploy, so that when something breaks in Task 4 you are debugging one unknown, not five.</p>
+<h3 id="task-0--configure-a-cloud-budget-alert-do-this-first-">Task 0 — Configure a cloud budget alert. <strong>Do this first.</strong> 🚨</h3>
+<p><strong>This is a graded gate. A submission without it cannot receive credit for any
+cloud-hosted work.</strong></p>
+<ol>
+<li>In your provider&#39;s billing console, create a monthly budget that would genuinely
+alarm you — for most students <strong>$5–$20</strong>.</li>
+<li>Add alert thresholds at <strong>50%, 80% and 100%</strong>.</li>
+<li>Send the notification to an email address <strong>you actually read</strong>.</li>
+<li>Screenshot the <em>configured</em> budget showing amount, thresholds and destination.</li>
+</ol>
+<p>Provider docs: <a href="https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-create.html">AWS Budgets</a>
+· <a href="https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/cost-mgt-alerts-monitor-usage-spending">Azure cost alerts</a>
+· <a href="https://cloud.google.com/billing/docs/how-to/budgets">Google Cloud budgets</a></p>
+<blockquote>
+<p><strong>A budget is a notification, not a cap.</strong> No mainstream cloud stops spending when you
+hit it. If your platform has no budget feature, a hard spending limit, a prepaid
+account with no card, or the course-managed quota (see the runbook) is the accepted
+substitute. Evidence of <em>some</em> ceiling is required either way.</p>
+</blockquote>
+<p>⏱ <strong>~15 minutes.</strong></p>
+<hr>
+<h3 id="task-1--an-api-with-an-honest-http-contract">Task 1 — An API with an honest HTTP contract</h3>
+<p>Build (or extend) the CampusPulse incidents API so it has <strong>at least</strong> these routes. The
+names may differ; the behavior may not.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>Method and path</th><th>Success</th><th>Must also handle</th></tr></thead><tbody><tr><td><code>GET /api/incidents?status=&amp;q=</code></td><td><code>200</code> with <code>{ items, count }</code></td><td>Filters applied server-side; unknown <code>status</code> → <code>400</code></td></tr><tr><td><code>GET /api/incidents/:id</code></td><td><code>200</code> with the incident</td><td>Unknown id → <code>404</code></td></tr><tr><td><code>POST /api/incidents</code></td><td><strong><code>201</code></strong> with the body <strong>and a <code>Location</code> header</strong></td><td>Missing/invalid fields → <code>400</code></td></tr><tr><td><code>PATCH /api/incidents/:id</code></td><td><code>200</code> with the updated incident</td><td>Invalid status → <code>400</code>; unknown id → <code>404</code></td></tr><tr><td><code>PUT /api/incidents/:id</code></td><td><code>200</code> with the replaced incident</td><td>Same as PATCH</td></tr><tr><td><code>DELETE /api/incidents/:id</code></td><td><strong><code>204</code> with no body</strong></td><td>Unknown id → <code>404</code></td></tr><tr><td><code>GET /api/healthz</code> (or <code>/healthz</code>)</td><td><code>200</code> with a small JSON body</td><td>Must include the running version — see Task 5</td></tr></tbody></table></div>
+<p>Requirements:</p>
+<ol>
+<li><strong>One error shape, everywhere.</strong> Every 4xx/5xx — validation, unknown id, unknown
+route, malformed JSON, and unexpected exceptions — returns the same JSON, for example
+<code>{&quot;error&quot;:{&quot;code&quot;:&quot;not_found&quot;,&quot;message&quot;:&quot;...&quot;}}</code>. A 500 must <strong>not</strong> leak a stack trace
+or SQL text to the client; log it on the server instead.</li>
+<li><strong>Read-only in public.</strong> Gate 2 requires that a public deployment refuses
+unauthenticated mutations, and you do not have authentication until Week 8. Add a
+switch driven by configuration (for example <code>ALLOW_WRITES=false</code>) so that, in
+production, <code>POST</code>/<code>PUT</code>/<code>PATCH</code>/<code>DELETE</code> return <strong><code>403</code></strong> in your error shape
+(<code>&quot;code&quot;:&quot;read_only&quot;</code>). Locally and in staging you may leave writes on.</li>
+<li><strong>A request id.</strong> Echo an incoming <code>X-Request-Id</code> or generate one, and return it on
+every response — including preflights and malformed-JSON <code>400</code>s, so register it
+<strong>before</strong> CORS and the JSON parser. Your frontend will display it when something
+fails.</li>
+</ol>
+<p><strong>Evidence.</strong> A <code>curl -i</code> transcript (status line, the headers that matter, body) for
+<strong>every row</strong> of the table, including <strong>one failure case per row</strong>, captured against
+<code>localhost</code>. Plus your automated tests&#39; output — the sample&#39;s
+<code>backend/test/api.test.mjs</code> shows the pattern.</p>
+<pre><code class="language-console">curl -i http://localhost:3001/api/incidents?status=resolved
+curl -i -X POST http://localhost:3001/api/incidents \
+     -H &quot;Content-Type: application/json&quot; -d &#39;{&quot;title&quot;:&quot;Wi-Fi down in CDM&quot;,&quot;service&quot;:&quot;wifi&quot;}&#39;
+curl -i -X DELETE http://localhost:3001/api/incidents/&lt;id&gt;
+curl -i -X PATCH  http://localhost:3001/api/incidents/does-not-exist \
+     -H &quot;Content-Type: application/json&quot; -d &#39;{&quot;status&quot;:&quot;resolved&quot;}&#39;
+</code></pre>
+<blockquote>
+<p><strong>Windows PowerShell note.</strong> Use <code>curl.exe</code>, and quote JSON as
+<code>-d &#39;{\&quot;title\&quot;:\&quot;Wi-Fi down\&quot;,\&quot;service\&quot;:\&quot;wifi\&quot;}&#39;</code> in 5.1, or put the body in a
+file and use <code>-d &quot;@body.json&quot;</code>. <code>Invoke-RestMethod</code> is also acceptable evidence if it
+shows the status code and headers (<code>-StatusCodeVariable</code> / <code>-ResponseHeadersVariable</code>
+in PowerShell 7).</p>
+</blockquote>
+<p>⏱ <strong>~2 hours</strong> (less if you start from the sample).</p>
+<hr>
+<h3 id="task-2--an-exact-cors-policy-proven-from-both-sides">Task 2 — An exact CORS policy, proven from both sides</h3>
+<p>Your frontend and API will be on <strong>different origins</strong> at least locally
+(<code>http://localhost:5173</code> → <code>http://localhost:3001</code>), and possibly in production
+(<code>https://app.&lt;domain&gt;</code> → <code>https://api.&lt;domain&gt;</code>). Configure CORS so that:</p>
+<ol>
+<li>The allowed origins come from <strong>configuration</strong> (for example
+<code>CORS_ORIGINS=https://app.example.edu,http://localhost:5173</code>), are compared
+<strong>exactly</strong> — scheme, host and port — and are <strong>never</strong> <code>*</code> or a reflected
+<code>Origin</code>.</li>
+<li>Preflight (<code>OPTIONS</code>) is answered for the methods and request headers your client
+actually sends (<code>Content-Type</code>, <code>X-Request-Id</code>), with a sensible <code>Access-Control-Max-Age</code>.</li>
+<li><code>Location</code> and <code>X-Request-Id</code> are listed in <code>Access-Control-Expose-Headers</code>, so your
+axios code can read them.</li>
+<li><strong>Error responses carry CORS headers too.</strong> If your CORS middleware runs after the
+route that threw, the browser hides your carefully shaped <code>400</code> behind a generic
+&quot;Network Error&quot;. Register CORS <strong>first</strong>.</li>
+<li>Responses vary on <code>Origin</code> (<code>Vary: Origin</code>) so a cache never serves one origin&#39;s
+answer to another.</li>
+</ol>
+<p><strong>Evidence — capture all four:</strong></p>
+<ul>
+<li>(a) A preflight from an <strong>allowed</strong> origin, with its <code>Access-Control-Allow-*</code> headers.</li>
+<li>(b) The same preflight from a <strong>disallowed</strong> origin, showing <strong>no</strong>
+<code>Access-Control-Allow-Origin</code>.</li>
+<li>(c) A <strong>plain <code>curl</code> GET</strong> with the disallowed <code>Origin</code> header that <strong>succeeds</strong> with
+data — and two sentences on why that is not a bug.</li>
+<li>(d) <strong>Break and fix in the browser.</strong> Remove your frontend&#39;s origin from the
+allowlist, reload, and screenshot DevTools (Console <strong>and</strong> the Network row for
+the failed request). Then restore it and screenshot the working preflight + real
+request pair. Name the exact header whose absence caused the failure.</li>
+</ul>
+<pre><code class="language-console">curl -i -X OPTIONS http://localhost:3001/api/incidents/abc \
+     -H &quot;Origin: http://localhost:5173&quot; \
+     -H &quot;Access-Control-Request-Method: PATCH&quot; \
+     -H &quot;Access-Control-Request-Headers: content-type,x-request-id&quot;
+</code></pre>
+<p>The <a href="#6-worked-example--the-depth-expected-for-one-artifact">worked example in §6</a> is
+artifact (a)–(c) done to full-credit depth.</p>
+<blockquote>
+<p><strong>The idea to own:</strong> CORS is enforced by the <strong>browser</strong>, on behalf of the user,
+against other origins&#39; scripts. It is not a firewall. <code>curl</code>, Postman and attackers&#39;
+scripts ignore it entirely — which is why Task 1&#39;s read-only switch exists.</p>
+</blockquote>
+<p>⏱ <strong>~1 hour.</strong></p>
+<hr>
+<h3 id="task-3--one-axios-client-used-everywhere">Task 3 — One axios client, used everywhere</h3>
+<p>Wire your React frontend to the API through <strong>one</strong> module, as in Block B
+(<code>frontend/src/api/client.ts</code> and <code>incidents.ts</code> in the sample).</p>
+<ol>
+<li><strong>One configured instance.</strong> <code>axios.create</code> with <code>baseURL</code> from build-time config
+(for example <code>import.meta.env.VITE_API_URL</code>), a <strong>timeout</strong> (the sample uses 4000 ms),
+and <code>Accept: application/json</code>. No component calls <code>axios.get</code> directly, and no
+component builds a URL by string concatenation.</li>
+<li><strong>One typed function per endpoint</strong> — <code>listIncidents(filters, signal)</code>,
+<code>getIncident</code>, <code>createIncident</code>, <code>updateStatus</code>, <code>replaceIncident</code>,
+<code>deleteIncident</code>, <code>checkHealth</code>. Query strings go through axios <code>params</code>, not
+template strings.</li>
+<li><strong>Interceptors.</strong> A request interceptor that adds <code>X-Request-Id</code>; a response
+interceptor (or a single <code>toApiError</code> function) that turns <strong>every</strong> failure into one
+<code>ApiError</code> with a <code>kind</code> of exactly one of <strong><code>http</code></strong>, <strong><code>network</code></strong>, <strong><code>timeout</code></strong>
+or <strong><code>canceled</code></strong>, plus <code>status</code>, <code>code</code>, <code>message</code> and the server&#39;s <code>requestId</code>
+(read from the <code>X-Request-Id</code> response header) where they exist.</li>
+<li><strong>Read what the server told you.</strong> After <code>createIncident</code>, read the new resource&#39;s
+URL from the <code>Location</code> header (which only works because of Task 2&#39;s exposed headers).
+Show the server&#39;s <code>error.message</code> for <code>http</code> errors, a &quot;can&#39;t reach the server&quot; message
+for <code>network</code>, a retry hint for <code>timeout</code> — and <strong>nothing at all</strong> for <code>canceled</code>.</li>
+<li><strong>Cancellation.</strong> The list request runs in a <code>useEffect</code> with an <code>AbortController</code>
+whose <code>signal</code> is passed to axios, and the cleanup aborts it. Typing quickly in a
+search box must not let an old response overwrite a newer one.</li>
+<li><strong>Failures keep the user&#39;s work.</strong> If a create fails with <code>400</code> or <code>403</code>, the form
+keeps what the user typed.</li>
+</ol>
+<p><strong>Evidence</strong> — screenshots or a short screen recording (≤ 2 minutes) showing, in the UI
+<strong>and</strong> the DevTools Network panel:</p>
+<ul>
+<li>a successful create (<code>201</code>, with the <code>Location</code> you read);</li>
+<li>an <code>http</code> error (<code>400</code> or <code>403</code>) displaying the server&#39;s message and request id;</li>
+<li>a <code>timeout</code> (use a slow endpoint, e.g. the sample&#39;s <code>delayMs</code> query, or DevTools
+throttling) and a <code>network</code> error (stop the API);</li>
+<li>a request shown as <strong>(canceled)</strong> in Network after fast typing or navigation, with no
+error shown to the user.</li>
+</ul>
+<p>Also submit at least one <strong>automated frontend test</strong> of your <code>ApiError</code>
+classification (the sample&#39;s <code>frontend/test/</code> uses Node&#39;s built-in test runner through
+<code>tsx</code>; Vitest is equally fine).</p>
+<p>⏱ <strong>~2 hours 30 minutes.</strong></p>
+<hr>
+<h3 id="task-4--put-the-whole-system-live-on-your-own-domain-over-https">Task 4 — Put the whole system live on your own domain over HTTPS</h3>
+<ol>
+<li>Deploy your API container and your built frontend. Choose <strong>same origin</strong>
+(<code>https://&lt;domain&gt;/</code> + <code>https://&lt;domain&gt;/api</code>) <strong>or</strong> <strong>two origins</strong>
+(<code>https://app.&lt;domain&gt;</code> + <code>https://api.&lt;domain&gt;</code>). Document the choice and <strong>one
+consequence</strong> of it for CORS and for your certificate&#39;s SANs.</li>
+<li>Point DNS at it and obtain a certificate for every name you serve. A managed
+platform or Caddy obtains and renews it for you; that is fine and expected.</li>
+<li>Production configuration:<ul>
+<li><code>CORS_ORIGINS</code> contains <strong>only</strong> your production frontend origin (no <code>localhost</code>);</li>
+<li>the frontend&#39;s <code>VITE_API_URL</code> is an <strong><code>https://</code></strong> URL (an <code>http://</code> API from an
+<code>https://</code> page is blocked as <strong>mixed content</strong> — say what you would see if you got
+this wrong);</li>
+<li>writes are off (Task 1.2);</li>
+<li>staging and production are separate URLs with separate configuration (the runbook&#39;s
+staging step is fine).</li>
+</ul>
+</li>
+<li>From a machine that is <strong>not</strong> your server:</li>
+</ol>
+<pre><code class="language-console">curl -sSI https://&lt;your-domain&gt;/ | head -5
+curl -sS  https://&lt;your-api-origin&gt;/api/healthz
+curl -sS -o /dev/null -w &quot;%{http_code}\n&quot; -X POST https://&lt;your-api-origin&gt;/api/incidents \
+     -H &quot;Content-Type: application/json&quot; -d &quot;{}&quot;
+curl -sS -o /dev/null -D - -X OPTIONS https://&lt;your-api-origin&gt;/api/incidents \
+     -H &quot;Origin: https://&lt;your-frontend-origin&gt;&quot; -H &quot;Access-Control-Request-Method: POST&quot;
+</code></pre>
+<p>The first two must succeed with <strong>no TLS warnings and no <code>--insecure</code> / <code>-k</code></strong>. The
+third must print <code>403</code>. The fourth must show <code>Access-Control-Allow-Origin</code> set to your
+production frontend origin. (Same origin? Run it anyway, and explain why the browser
+never sends it for you.)</p>
+<ol start="5">
+<li>Open the live frontend in a browser, filter the list, and screenshot the Network panel
+with the <strong>Protocol</strong> column turned on (right-click a column header → Protocol).</li>
+</ol>
+<blockquote>
+<p><strong>Protect your weekend.</strong> This task carries the time variance. A managed platform
+(Azure Container Apps, Render, Fly.io, Railway, Cloud Run, App Runner) or a VM with
+<a href="https://caddyserver.com/docs/automatic-https">Caddy</a> is strongly recommended. Hand-rolled
+Nginx + certbot is allowed but budget 4–6 hours. <strong>You are not graded on which path you
+pick.</strong> If provisioning is blocked, use the course recovery environment.</p>
+</blockquote>
+<p>⏱ <strong>~3 hours</strong> on a managed path.</p>
+<hr>
+<h3 id="task-5--a-pipeline-that-deploys-a-digest-a-gate-that-notices-a-rollback">Task 5 — A pipeline that deploys a digest, a gate that notices, a rollback</h3>
+<p>Build a GitHub Actions workflow that:</p>
+<ol>
+<li>runs your backend <strong>and</strong> frontend tests and fails the run if either fails;</li>
+<li>builds the frontend with the production <code>VITE_API_URL</code>, builds and pushes the API
+image, and <strong>records the image digest</strong> (<code>sha256:…</code>) in the job summary;</li>
+<li>deploys <strong>that digest</strong> — not <code>:latest</code>. Platform-native commands
+(<code>az containerapp update --image …@sha256:…</code>, <code>gcloud run deploy --image …</code>,
+<code>flyctl deploy --image …</code>) are fine;</li>
+<li><strong>gates on health and on the exact deployed release identity.</strong> Make your health
+endpoint report the running version, e.g. <code>{&quot;ok&quot;:true,&quot;version&quot;:&quot;&lt;git-sha&gt;&quot;}</code>, pass
+that value in as configuration, and have the gate parse the JSON and wait (bounded) for
+<strong>that</strong> value. A gate that accepts any <code>200</code> passes on the <em>old</em> instance during a
+rolling deploy — run <code>node weeks/week04/samples/deploy-sim.mjs --rolling</code> to watch it
+happen.</li>
+</ol>
+<p>Then <strong>break it on purpose</strong>: record the live version, deploy a release whose health
+check fails, show the gate <strong>failing the pipeline</strong>, roll back to the recorded
+version/digest, and prove the old one is serving again. Report the time from &quot;gate
+failed&quot; to &quot;serving again&quot;.</p>
+<p>Docs: <a href="https://docs.github.com/en/actions/how-tos/deploy">Deploy with GitHub Actions</a> ·
+<a href="https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets">Using secrets</a></p>
+<p>⏱ <strong>~3 hours.</strong></p>
+<hr>
+<h3 id="task-6--inspect-your-own-tls-and-http-version">Task 6 — Inspect your own TLS and HTTP version</h3>
+<p>This is Block A, pointed at your own site. Use <strong>whichever platform you have</strong>; both
+earn full marks.</p>
+<p><strong>Windows (PowerShell 5.1 or 7 — no OpenSSL):</strong></p>
+<pre><code class="language-powershell">cd weeks\week04\samples
+.\tls-inspect.ps1 &lt;your-domain&gt;
+.\tls-inspect.ps1 &lt;your-domain&gt; -SaveCertificate mysite.cer
+certutil -dump mysite.cer          # every field, including the SAN extension
+curl.exe -sS -o NUL -w &quot;version=%{http_version} code=%{http_code}\n&quot; https://&lt;your-domain&gt;/
+</code></pre>
+<blockquote>
+<p>If PowerShell refuses to run the script, allow it for this window only:
+<code>Set-ExecutionPolicy -Scope Process Bypass</code>. You can also double-click the padlock in
+Edge/Chrome → <em>Connection is secure</em> → <em>Certificate is valid</em> to see the same chain.</p>
+</blockquote>
+<p><strong>macOS / Linux (reference):</strong></p>
+<pre><code class="language-bash">openssl s_client -connect &lt;your-domain&gt;:443 -servername &lt;your-domain&gt; \
+  -showcerts -alpn h2,http/1.1 &lt;/dev/null 2&gt;&amp;1 \
+  | grep -E &#39;depth=|^ [0-9] s:|^   [iv]:|Verification|ALPN protocol&#39;
+openssl s_client -connect &lt;your-domain&gt;:443 -servername &lt;your-domain&gt; &lt;/dev/null 2&gt;/dev/null \
+  | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+curl -sS -o /dev/null -w &#39;version=%{http_version} code=%{http_code}\n&#39; https://&lt;your-domain&gt;/
+</code></pre>
+<p>Submit the raw output and an annotation, in your own words, of:</p>
+<ul>
+<li>the leaf&#39;s <strong>issuer</strong> and the chain from leaf to root. On macOS, <code>-showcerts</code> lists
+what your <strong>server sent</strong>, so say which certificates were sent and which root came
+from <strong>your device&#39;s trust store</strong>. On Windows, <code>tls-inspect.ps1</code> shows the chain
+<strong>Windows built</strong>, which may include intermediates it fetched or cached; name the
+root that came from the Windows store and say why the script alone cannot prove which
+intermediates the server sent;</li>
+<li>the <strong>SANs</strong>, and whether they cover every hostname you serve (including the API
+origin if it is separate);</li>
+<li><strong>NotAfter</strong> and the days remaining, and <strong>who renews it</strong> (your platform, Caddy,
+certbot) — with one piece of evidence that renewal is automatic (provider screen,
+Caddy log line, or <code>certbot renew --dry-run</code>);</li>
+<li>the <strong>verdict</strong> (<code>PolicyErrors : None</code> / <code>Verification: OK</code>) and one failure it would
+have caught;</li>
+<li>the <strong>HTTP version</strong> your browser used (Task 4 screenshot) versus what <code>curl</code> used, and
+one sentence on why they may differ (HTTP/2 multiplexing, HTTP/3 over QUIC, <code>alt-svc</code>).</li>
+</ul>
+<p>Also confirm your HW2 <strong>CAA</strong> record still permits the CA that issued this certificate
+(one line: <code>Resolve-DnsName &lt;domain&gt; -Type CAA</code> on Windows, <code>dig +short CAA &lt;domain&gt;</code> on
+macOS).</p>
+<blockquote>
+<p><strong>Windows vs. OpenSSL differences are expected, not errors.</strong> Windows builds the chain
+itself and may show the root (and even a cross-signed root) at extra depths; OpenSSL
+prints only what the server sent plus the trust anchor. Windows may also fetch a missing
+intermediate on its own (AIA), so a chain Windows accepts can still fail in Firefox or
+OpenSSL. Compare with <a href="samples/tls-inspect-captures.txt"><code>tls-inspect-captures.txt</code></a>.</p>
+</blockquote>
+<p>⏱ <strong>~45 minutes.</strong></p>
+<hr>
+<h3 id="task-7--an-expiry-alert-that-has-actually-fired">Task 7 — An expiry alert that has actually fired</h3>
+<ol>
+<li>Schedule a check that runs <strong>from outside your host</strong> — a GitHub Actions workflow with
+<code>schedule:</code> plus <code>workflow_dispatch:</code> is the expected solution. It must fail when the
+live connection would not be accepted (bad chain, wrong name, untrusted) <strong>or</strong> fewer
+than ~21 days remain. On an <code>ubuntu-latest</code> runner:</li>
+</ol>
+<pre><code class="language-bash">HEALTH_URL=https://&lt;api-host&gt;/api/healthz          # your API&#39;s health route
+curl -sSf --max-time 10 &quot;$HEALTH_URL&quot; &gt;/dev/null || exit 1     # chain + name + trust
+for H in &lt;frontend-host&gt; &lt;api-host&gt;; do          # one name if same origin
+  curl -sSf --max-time 10 -o /dev/null &quot;https://$H/&quot; || exit 1
+  openssl s_client -connect &quot;$H:443&quot; -servername &quot;$H&quot; -verify_hostname &quot;$H&quot; \
+    -verify_return_error &lt;/dev/null 2&gt;/dev/null \
+    | openssl x509 -noout -checkend $((21*24*3600)) || exit 1   # expiry
+done
+</code></pre>
+<p>   With two origins, check <strong>both</strong> hostnames: each has its own certificate (or SAN)
+   and either can expire.</p>
+<p>   A <code>windows-latest</code> runner may instead run <code>tls-inspect.ps1</code> and fail when
+   <code>PolicyErrors</code> is not <code>None</code> or <code>DaysLeft</code> is below your threshold.
+2. <strong>Make it fire.</strong> Raise the threshold (e.g. to 200 days), run it, and capture the
+   <strong>notification you received</strong> (the GitHub failure email or similar). Restore the real
+   threshold and show the green run.
+3. One sentence each: why a cron job on the monitored host is not acceptable, and how you
+   would notice if the schedule silently stopped running.</p>
+<blockquote>
+<p><strong>The received notification is the evidence.</strong> A configured-but-never-fired alert
+scores zero on this task.</p>
+</blockquote>
+<p>⏱ <strong>~1 hour.</strong></p>
+<hr>
+<h3 id="task-8--critique-an-ai-suggested-fix-for-cors-or-tls">Task 8 — Critique an AI-suggested &quot;fix&quot; for CORS or TLS</h3>
+<p>Ask an AI assistant to fix a CORS error or a TLS error you reproduced (locally, or against
+<code>badssl.com</code> — never by weakening production). Assistants reliably suggest one of:</p>
+<ul>
+<li><strong>CORS:</strong> <code>app.use(cors())</code> with no options, <code>origin: &quot;*&quot;</code> (or <code>origin: true</code>, which
+reflects any origin) <strong>together with</strong> <code>credentials: true</code>, a browser extension that
+&quot;disables CORS&quot;, or proxying everything through a dev server and calling it fixed;</li>
+<li><strong>TLS:</strong> <code>curl -k</code>, <code>rejectUnauthorized: false</code> / <code>httpsAgent</code> with verification off,
+<code>NODE_TLS_REJECT_UNAUTHORIZED=0</code>, PowerShell <code>-SkipCertificateCheck</code>, or a
+<code>ServerCertificateValidationCallback</code> that returns <code>$true</code>.</li>
+</ul>
+<p>Submit:</p>
+<ol>
+<li>the prompt and the verbatim suggestion;</li>
+<li><strong>what it actually does</strong> — for CORS, which origins it now lets read your responses;
+for TLS, which check it disables (expiry, chain, hostname, trust anchor);</li>
+<li>the <strong>evidence</strong> that identified the real cause (your preflight dump, your
+<code>tls-inspect</code> verdict or <code>openssl</code> error);</li>
+<li>the <strong>real fix</strong> you applied, and its evidence.</li>
+</ol>
+<blockquote>
+<p><strong>Two nuances that earn the top marks.</strong> A dev-server proxy is a legitimate
+<em>development</em> choice — it is only wrong when it hides that production has no CORS
+policy. And &quot;add the certificate to the trust store&quot; is correct for a verified private
+CA root in a scoped store, and wrong for an unknown leaf. If your suggestion is one of
+these, say which version you got.</p>
+</blockquote>
+<p>No-personal-AI route: use the
+<a href="../../docs/non-ai-review-artifacts.html#hw4---cors-and-release-draft">HW4 supplied draft</a>
+instead; it earns the same marks.</p>
+<p>⏱ <strong>~30 minutes.</strong></p>
+<hr>
+<h2 id="4-required-evidence-artifacts">4. Required evidence artifacts</h2>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>#</th><th>Artifact</th><th>From</th></tr></thead><tbody><tr><td>1</td><td>Budget alert screenshot: amount, thresholds, destination</td><td>Task 0</td></tr><tr><td>2</td><td><code>curl -i</code> transcript for every route, one failure per route</td><td>Task 1</td></tr><tr><td>3</td><td>Backend test output</td><td>Task 1</td></tr><tr><td>4</td><td>Allowed preflight, refused preflight, curl-with-bad-Origin</td><td>Task 2</td></tr><tr><td>5</td><td>CORS break-and-fix DevTools screenshots, with the missing header named</td><td>Task 2</td></tr><tr><td>6</td><td>UI + Network evidence of 201/Location, http, timeout, network, canceled</td><td>Task 3</td></tr><tr><td>7</td><td>Frontend test output for <code>ApiError</code> classification</td><td>Task 3</td></tr><tr><td>8</td><td>Live-site <code>curl</code> checks (HTTPS, health, <code>403</code> on write, an allowed preflight from the production origin) + Protocol-column screenshot</td><td>Task 4</td></tr><tr><td>9</td><td>Topology note: same-origin vs two origins, and its consequence</td><td>Task 4</td></tr><tr><td>10</td><td>Workflow YAML, a green run link, and the recorded digest</td><td>Task 5</td></tr><tr><td>11</td><td>Failed gate run, rollback, recovery time</td><td>Task 5</td></tr><tr><td>12</td><td>Raw TLS inspection output (Windows or macOS) + annotation + renewal evidence + CAA line</td><td>Task 6</td></tr><tr><td>13</td><td>Expiry check workflow + <strong>the notification you received</strong></td><td>Task 7</td></tr><tr><td>14</td><td>AI suggestion, its real effect, your evidence, your fix</td><td>Task 8</td></tr><tr><td>15</td><td>AI-use log</td><td>Evidence standard</td></tr><tr><td>16</td><td>Redaction attestation</td><td>Evidence standard</td></tr></tbody></table></div>
+<hr>
+<h2 id="5-the-eight-part-evidence-standard">5. The eight-part evidence standard</h2>
+<p>Every submission carries all eight. See
+<a href="../../docs/evidence-standard.html"><code>docs/evidence-standard.md</code></a>.</p>
+<ol>
+<li><strong>Commit SHA or release tag</strong> — exactly what was tested.</li>
+<li><strong>Reproduction commands</strong> plus exported configuration (environment variable <em>names</em>
+and non-secret values, workflow YAML).</li>
+<li><strong>Raw sanitized evidence</strong> — header dumps, DevTools screenshots, TLS output, run logs.</li>
+<li><strong>Annotated interpretation</strong> in your own words.</li>
+<li><strong>At least one deliberate failure and its diagnosis</strong> — Task 2(d), Task 5&#39;s broken
+release and Task 7&#39;s fired alert all qualify. Name the one you are submitting.</li>
+<li><strong>AI-use log</strong> — what you generated, accepted, rejected, and how you verified it.</li>
+<li><strong>One challenged AI claim</strong> — Task 8.</li>
+<li><strong>Redaction attestation</strong> — no live secrets, tokens, cookies, API keys or private keys.</li>
+</ol>
+<blockquote>
+<p><strong>Redaction this week.</strong> Your <strong>certificate</strong> is public (every visitor receives it and
+it is in CT logs) — do not redact it. Your <strong>private key</strong> must never appear; if it
+does, that artifact scores zero and you resubmit with rotation evidence. Redact cloud
+credentials, deploy tokens and any <code>secrets.*</code> values that leaked into a log.
+<strong>Replace, do not crop</strong> — keep the shape.</p>
+</blockquote>
+<hr>
+<h2 id="6-worked-example--the-depth-expected-for-one-artifact">6. Worked example — the depth expected for one artifact</h2>
+<p>This is artifact #4 (Task 2 a–c), done to full-credit standard against the sample API.
+Note that the annotation is longer than the evidence.</p>
+<blockquote>
+<h3 id="artifact-4--preflight-allowed-and-refused">Artifact 4 — preflight, allowed and refused</h3>
+<p>Captured 2026-10-01 against the sample API on <code>localhost:3001</code>, started with
+<code>CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173</code>. Output verbatim except
+<code>Date</code>/<code>Keep-Alive</code> lines removed.</p>
+<pre><code class="language-console">$ curl -i -X OPTIONS http://localhost:3001/api/incidents/abc \
+    -H &quot;Origin: http://localhost:5173&quot; \
+    -H &quot;Access-Control-Request-Method: PATCH&quot; \
+    -H &quot;Access-Control-Request-Headers: content-type,x-request-id&quot;
+HTTP/1.1 204 No Content
+Access-Control-Allow-Origin: http://localhost:5173
+Vary: Origin
+Access-Control-Allow-Methods: GET,POST,PUT,PATCH,DELETE
+Access-Control-Allow-Headers: Content-Type,X-Request-Id
+Access-Control-Max-Age: 600
+Access-Control-Expose-Headers: Location,X-Request-Id
+Content-Length: 0
+
+$ curl -i -X OPTIONS http://localhost:3001/api/incidents/abc \
+    -H &quot;Origin: https://evil.example&quot; \
+    -H &quot;Access-Control-Request-Method: PATCH&quot; \
+    -H &quot;Access-Control-Request-Headers: content-type,x-request-id&quot;
+HTTP/1.1 204 No Content
+Connection: keep-alive
+
+$ curl -i &quot;http://localhost:3001/api/incidents?status=resolved&quot; -H &quot;Origin: https://evil.example&quot;
+HTTP/1.1 200 OK
+X-Request-Id: 7fd1d604-c8c3-4ec9-9b5f-a8cd91b14deb
+Content-Type: application/json; charset=utf-8
+
+{&quot;items&quot;:[{&quot;id&quot;:&quot;bf1fb737-…&quot;,&quot;title&quot;:&quot;Synthetic shuttle tracker offline&quot;,&quot;service&quot;:&quot;shuttle&quot;,&quot;status&quot;:&quot;resolved&quot;,…}],&quot;count&quot;:1}
+</code></pre>
+<h3 id="annotation">Annotation</h3>
+<p><strong>Allowed preflight.</strong> The browser asks, before sending a <code>PATCH</code> with a JSON body and
+my <code>X-Request-Id</code> header, whether <code>http://localhost:5173</code> may do that. The server
+answers with that <strong>exact</strong> origin echoed from its allowlist — not <code>*</code> — plus the
+methods and headers it accepts. <code>Max-Age: 600</code> lets the browser skip this question for
+ten minutes, which is why I tick <em>Disable cache</em> in DevTools when I change the
+allowlist; otherwise I am testing the old answer.</p>
+<p><strong>Refused preflight.</strong> Same question from <code>https://evil.example</code>: still <code>204</code>, but <strong>no</strong>
+<code>Access-Control-Allow-Origin</code>. The status code is not the refusal — the missing header
+is. A browser receiving this never sends the <code>PATCH</code>, and the page&#39;s script sees only
+&quot;Network Error&quot;; the reason appears in the Console, not in JavaScript.</p>
+<p><strong><code>curl</code> with the bad origin gets the data.</strong> <code>200</code> and a full body. That is not a hole
+in my CORS policy: CORS asks the <em>browser</em> to protect a <em>user</em> from other sites&#39; scripts
+reading responses with that user&#39;s ambient credentials. <code>curl</code> has no user and no other
+site, so it ignores CORS. This is exactly why my production deployment returns <code>403</code> on
+writes until Week 8 — CORS would not have stopped a script from calling <code>DELETE</code>.</p>
+<p><strong><code>Vary: Origin</code>.</strong> Because the answer depends on who asks, a shared cache must key on
+<code>Origin</code>. Without it, a CDN could hand the <code>evil.example</code> answer (no ACAO) to my real
+frontend and break it — a Week 5 problem I am avoiding now.</p>
+<p><strong>What this does not prove.</strong> These are <code>localhost</code> captures over HTTP/1.1. Artifact 8
+repeats the allowed preflight against production over HTTPS, where my
+<code>CORS_ORIGINS</code> contains only <code>https://app.campuspulse.example</code>.</p>
+</blockquote>
+<p><strong>What makes that full credit:</strong> every claim is tied to a line of evidence, it explains
+the counter-intuitive result instead of hiding it, and it names what it does not prove.</p>
+<hr>
+<h2 id="7-rubric--100-points">7. Rubric — 100 points</h2>
+<p>Each row is evaluated 60% domain content and 40% evidence, as in the syllabus. The same
+release artifacts may be referenced by Gate 2 and the final. Do not infer fabrication
+merely because an external service or dependency changed.</p>
+<h3 id="part-a--connect-it-40">Part A — Connect it (40)</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>#</th><th>Criterion</th><th style="text-align:right">Pts</th></tr></thead><tbody><tr><td>A1</td><td>API routes use the <strong>right method and status code</strong> (201 + <code>Location</code>, 204 with no body, 400 vs 404), with a failure case shown for each; tests pass.</td><td style="text-align:right">10</td></tr><tr><td>A2</td><td><strong>One error shape</strong> on every error path, no stack traces leaked; request id on every response; production <strong>read-only switch returns 403</strong>.</td><td style="text-align:right">6</td></tr><tr><td>A3</td><td><strong>CORS:</strong> exact allowlist from configuration (no <code>*</code>/reflection), preflight evidence allowed vs refused, exposed <code>Location</code>/<code>X-Request-Id</code>, CORS headers on error responses, <code>Vary: Origin</code>.</td><td style="text-align:right">10</td></tr><tr><td>A4</td><td><strong>axios client:</strong> one instance (<code>baseURL</code>, timeout), one typed function per endpoint, <code>params</code> for queries, interceptor for the request id; no direct axios calls in components.</td><td style="text-align:right">6</td></tr><tr><td>A5</td><td><strong><code>ApiError</code></strong> distinguishes http/network/timeout/canceled, with UI + Network evidence for each; <code>AbortController</code> cleanup; form input kept on failure; a frontend test.</td><td style="text-align:right">8</td></tr></tbody></table></div>
+<h3 id="part-b--ship-it-35">Part B — Ship it (35)</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>#</th><th>Criterion</th><th style="text-align:right">Pts</th></tr></thead><tbody><tr><td>B1</td><td><strong>Cost control configured (GATE).</strong> Budget alert/thresholds/destination, or the accepted course-managed quota/ceiling evidence.</td><td style="text-align:right">8</td></tr><tr><td>B2</td><td>Frontend and API <strong>live on your own domain over HTTPS</strong>, no TLS warnings, no <code>-k</code>; production <code>CORS_ORIGINS</code> and <code>https://</code> API URL; staging separate; topology note.</td><td style="text-align:right">12</td></tr><tr><td>B3</td><td>Pipeline runs both test suites, records the <strong>image digest</strong>, and deploys that digest.</td><td style="text-align:right">7</td></tr><tr><td>B4</td><td>Health gate checks the <strong>deployed version</strong>, visibly <strong>fails</strong> the broken release; rollback <strong>executed</strong> with proof and a timing number.</td><td style="text-align:right">8</td></tr></tbody></table></div>
+<h3 id="part-c--trust-it-15">Part C — Trust it (15)</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>#</th><th>Criterion</th><th style="text-align:right">Pts</th></tr></thead><tbody><tr><td>C1</td><td>TLS inspection of <strong>your</strong> domain (Windows or macOS) with annotated chain (sent vs trust store), SANs vs names served, expiry, renewal owner + evidence, verdict, CAA line.</td><td style="text-align:right">7</td></tr><tr><td>C2</td><td>HTTP version observed in the browser and in <code>curl</code>, with a correct one-paragraph interpretation.</td><td style="text-align:right">3</td></tr><tr><td>C3</td><td>Scheduled expiry/handshake check run from outside the host that <strong>actually fired</strong>, with the received notification.</td><td style="text-align:right">5</td></tr></tbody></table></div>
+<h3 id="part-d--judgment-10">Part D — Judgment (10)</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>#</th><th>Criterion</th><th style="text-align:right">Pts</th></tr></thead><tbody><tr><td>D1</td><td>CORS break-and-fix diagnosis that names the missing header and explains curl vs browser.</td><td style="text-align:right">3</td></tr><tr><td>D2</td><td>AI CORS/TLS critique: the suggestion, what it really permits or disables, the evidence, the real fix.</td><td style="text-align:right">5</td></tr><tr><td>D3</td><td>AI-use log and redaction attestation, both complete.</td><td style="text-align:right">2</td></tr></tbody></table></div>
+<p><strong>Total: 100.</strong></p>
+<h3 id="automatic-deductions">Automatic deductions</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>Condition</th><th>Effect</th></tr></thead><tbody><tr><td>No budget alert</td><td>Zero on B1 <strong>and</strong> no credit for cloud-hosted work until supplied</td></tr><tr><td>A private key or live secret appears in the submission</td><td>Zero on that artifact + resubmission with rotation evidence</td></tr><tr><td>Production API accepts unauthenticated writes</td><td>Zero on A2&#39;s read-only portion and Gate 2 not passed until fixed</td></tr><tr><td><code>Access-Control-Allow-Origin: *</code> or reflected origin in production</td><td>Zero on A3</td></tr><tr><td>Alert configured but never fired</td><td>Zero on C3</td></tr><tr><td>Rollback described but not executed</td><td>Zero on B4</td></tr><tr><td>Evidence that cannot be reproduced from your own commands</td><td>Request provenance and diagnose environmental drift; fabrication requires evidence of fabrication, not failure alone</td></tr></tbody></table></div>
+<hr>
+<h2 id="8-time-estimate">8. Time estimate</h2>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>Task</th><th style="text-align:right">Estimate</th></tr></thead><tbody><tr><td>0 — Budget alert</td><td style="text-align:right">15 min</td></tr><tr><td>1 — API contract</td><td style="text-align:right">2 h</td></tr><tr><td>2 — CORS, both sides</td><td style="text-align:right">1 h</td></tr><tr><td>3 — axios client</td><td style="text-align:right">2 h 30 min</td></tr><tr><td>4 — Live over HTTPS</td><td style="text-align:right">3 h</td></tr><tr><td>5 — Pipeline, gate, rollback</td><td style="text-align:right">3 h</td></tr><tr><td>6 — TLS + HTTP version inspection</td><td style="text-align:right">45 min</td></tr><tr><td>7 — Expiry alert, made to fire</td><td style="text-align:right">1 h</td></tr><tr><td>8 — AI CORS/TLS critique</td><td style="text-align:right">30 min</td></tr><tr><td>Write-up and annotation</td><td style="text-align:right">1 h 15 min</td></tr><tr><td><strong>Total</strong></td><td style="text-align:right"><strong>~15 h</strong></td></tr></tbody></table></div>
+<p>This is the course&#39;s integration peak, not the ordinary weekly budget. Starting from the
+CampusPulse full-stack sample removes most of Tasks 1–3&#39;s time (it does <strong>not</strong> include
+the <code>ALLOW_WRITES</code> switch or a version in its health response — you add both); starting from the
+deployment runbook removes most of Task 4&#39;s. If provisioning is blocked, use the course
+environment and request recovery — do not spend another unbounded evening on account or
+billing setup.</p>
+<p><strong>Suggested schedule over two weeks:</strong></p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>When</th><th>Do</th></tr></thead><tbody><tr><td>Day 1 (1 h)</td><td>Task 0, then start the deploy path (account, DNS) so waits happen in the background</td></tr><tr><td>Days 2–3 (4 h)</td><td>Tasks 1–2 on localhost — API, error shape, CORS evidence</td></tr><tr><td>Day 4 (2.5 h)</td><td>Task 3 — axios client and its error states</td></tr><tr><td>Days 5–6 (3 h)</td><td>Task 4 — live over HTTPS, production CORS, read-only</td></tr><tr><td>Days 7–8 (3 h)</td><td>Task 5 — pipeline, broken release, rollback</td></tr><tr><td>Day 9 (2.5 h)</td><td>Tasks 6–8 and the write-up</td></tr></tbody></table></div>
+<hr>
+<h2 id="9-submission">9. Submission</h2>
+<p>One PDF or Markdown file, plus a repository link.</p>
+<pre><code>csc436-hw4-&lt;lastname&gt;.pdf                      # or .md
+csc436-hw4-&lt;lastname&gt;-evidence/
+  ├── 01-budget-alert.png
+  ├── 02-api-curl.txt
+  ├── 03-backend-tests.txt
+  ├── 04-cors-preflights.txt
+  ├── 05-cors-break-fix/           (screenshots)
+  ├── 06-axios-states/             (screenshots or ≤2 min video)
+  ├── 07-frontend-tests.txt
+  ├── 08-live-checks.txt + protocol.png
+  ├── 09-topology.md
+  ├── 10-workflow.yml + run link
+  ├── 11-gate-rollback.txt
+  ├── 12-tls-inspect.txt
+  ├── 13-expiry-alert/             (workflow + notification)
+  └── 14-ai-critique.md
+</code></pre>
+<p>The write-up must open with: your frontend URL, your API base URL, the <strong>commit SHA</strong> the
+evidence was captured at, the capture date, and your redaction attestation.</p>
+<hr>
+<h2 id="10-what-good-looks-like-and-what-will-lose-points">10. What good looks like, and what will lose points</h2>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th>✅ Good</th><th>❌ Loses points</th></tr></thead><tbody><tr><td>&quot;Preflight from <code>evil.example</code> returned 204 but no <code>Access-Control-Allow-Origin</code>; that missing header is the refusal.&quot;</td><td>&quot;CORS is configured. ✅&quot;</td></tr><tr><td><code>CORS_ORIGINS=https://app.campuspulse.example</code> in production.</td><td><code>origin: &quot;*&quot;</code>, <code>origin: true</code>, or <code>localhost</code> left in the production list.</td></tr><tr><td><code>createIncident</code> returns the new id read from <code>Location</code>.</td><td>Re-fetching the whole list after every create because the header was unreadable.</td></tr><tr><td>A timeout shows &quot;The server is slow — try again&quot;; a canceled request shows nothing.</td><td>Every failure shows &quot;Something went wrong&quot;, or a canceled request flashes an error.</td></tr><tr><td><code>POST</code> to production returns <code>403 {&quot;error&quot;:{&quot;code&quot;:&quot;read_only&quot;,…}}</code>.</td><td>&quot;CORS stops other sites from writing to my API.&quot;</td></tr><tr><td>&quot;Windows showed four depths because it built the chain itself; my server sent two.&quot;</td><td>&quot;The certificate is valid. ✅&quot;</td></tr><tr><td>The <strong>email you received</strong> when the expiry alert fired.</td><td>A screenshot of the alert configuration page.</td></tr><tr><td>A health gate that waits for the new version to answer.</td><td>A health gate that accepts any 200 — the old instance&#39;s.</td></tr><tr><td>&quot;The model suggested <code>origin: true</code> with credentials; that lets any site read a logged-in user&#39;s data. I listed my one origin instead.&quot;</td><td>&quot;The AI helped me fix CORS.&quot;</td></tr></tbody></table></div>
+<hr>
+<h2 id="11-the-non-generatable-component">11. The non-generatable component</h2>
+<p><strong>A model can write your Express routes, your CORS options and your axios client — and you
+should let it.</strong> What it cannot do:</p>
+<ul>
+<li><strong>See what your browser refused.</strong> The preflight your browser actually sent, and the
+header that was missing from the answer, exist only in your DevTools.</li>
+<li><strong>Tell you what your chain looks like.</strong> It has never connected to your host; asked, it
+will describe a <em>plausible</em> chain, confidently.</li>
+<li><strong>Prove control of your domain</strong> or get a certificate issued for it.</li>
+<li><strong>Receive your alert</strong>, or <strong>watch your health gate stop a bad release</strong>. Those are
+facts about your running system at a moment in time.</li>
+<li><strong>Judge the trade.</strong> <code>origin: &quot;*&quot;</code> and <code>-k</code> genuinely do make the error go away.
+Knowing that the error <em>was the only thing telling you the truth</em> is the skill this
+week grades.</li>
+</ul>
+<p>Every task above has its correctness oracle outside the file the model is editing — in a
+browser, a CA, a trust store, a scheduler or a billing system. That is the delegation line
+from Week 1.</p>
+
+</main>
+<footer>Individual coursework. D2L contains dated deadlines, submissions and private course access.</footer>
+</body>
+</html>
